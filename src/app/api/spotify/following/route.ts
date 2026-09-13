@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
-import { getFollowedArtists, SpotifyAuthError } from "@/lib/spotify";
+import { getFollowedArtists, SpotifyApiError, SpotifyAuthError } from "@/lib/spotify";
 
 /**
  * Endpoint the client uses to request the following pages.
@@ -25,6 +25,12 @@ export async function GET(request: Request) {
   } catch (error) {
     if (error instanceof SpotifyAuthError) {
       return NextResponse.json({ error: error.message }, { status: 401 });
+    }
+
+    // Forward the real status so the client can tell a missing scope (403) or a
+    // rate limit (429) apart from a generic upstream failure.
+    if (error instanceof SpotifyApiError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
     }
 
     console.error("[api/spotify/following]", error);

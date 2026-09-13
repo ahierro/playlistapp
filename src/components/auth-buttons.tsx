@@ -1,16 +1,11 @@
 import { LogIn, LogOut } from "lucide-react";
 
-import { signIn, signOut } from "@/auth";
 import { Button } from "@/components/ui/button";
+import { signInWithSpotify, signOutOfSpotify } from "@/lib/auth-actions";
 
 export function SignInButton({ className }: { className?: string }) {
   return (
-    <form
-      action={async () => {
-        "use server";
-        await signIn("spotify", { redirectTo: "/artists" });
-      }}
-    >
+    <form action={signInWithSpotify}>
       <Button type="submit" size="lg" className={className}>
         <LogIn />
         Sign in with Spotify
@@ -21,12 +16,7 @@ export function SignInButton({ className }: { className?: string }) {
 
 export function SignOutButton() {
   return (
-    <form
-      action={async () => {
-        "use server";
-        await signOut({ redirectTo: "/" });
-      }}
-    >
+    <form action={signOutOfSpotify}>
       <Button type="submit" variant="outline" size="sm">
         <LogOut />
         Sign out

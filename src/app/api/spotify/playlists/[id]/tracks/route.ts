@@ -1,9 +1,27 @@
 import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
-import { getUserPlaylists, SpotifyApiError, SpotifyAuthError } from "@/lib/spotify";
+import {
+  getPlaylistItems,
+  SpotifyApiError,
+  SpotifyAuthError,
+} from "@/lib/spotify";
 
-export async function GET(request: Request) {
+/**
+ * One page of a playlist's contents, for the JSON export.
+ *
+ * The client walks these pages so it can show progress and stay off the serverless
+ * time limit; doing the whole export in a single request would mean one function
+ * call fetching thousands of tracks.
+ *
+ * A 403 here means the playlist is not the user's and not collaborative, which
+ * Spotify does not let us read at all. It is forwarded as-is so the client can skip
+ * that one playlist and carry on.
+ */
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
   const session = await auth();
 
   if (!session?.accessToken || session.error) {
@@ -13,6 +31,7 @@ export async function GET(request: Request) {
     );
   }
 
+  const { id } = await params;
   const offsetParam = new URL(request.url).searchParams.get("offset");
   const offset = Number(offsetParam ?? 0);
 
@@ -21,20 +40,18 @@ export async function GET(request: Request) {
   }
 
   try {
-    const page = await getUserPlaylists(session.accessToken, { offset });
+    const page = await getPlaylistItems(session.accessToken, id, { offset });
     return NextResponse.json(page);
   } catch (error) {
     if (error instanceof SpotifyAuthError) {
       return NextResponse.json({ error: error.message }, { status: 401 });
     }
 
-    // Forward the real status so the client can tell a missing scope (403) or a
-    // rate limit (429) apart from a generic upstream failure.
     if (error instanceof SpotifyApiError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
 
-    console.error("[api/spotify/playlists]", error);
+    console.error("[api/spotify/playlists/:id/tracks]", error);
     return NextResponse.json(
       {
         error:

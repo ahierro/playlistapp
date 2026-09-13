@@ -6,6 +6,10 @@ declare module "next-auth" {
     accessToken?: string;
     /** Present if the token could not be renewed and the user has to sign in again. */
     error?: "RefreshTokenError";
+    user?: DefaultSession["user"] & {
+      /** Spotify user id (the JWT `sub`). Scopes the client-side cache per account. */
+      id?: string;
+    };
   }
 }
 
@@ -17,6 +21,8 @@ declare module "@auth/core/jwt" {
   interface JWT {
     accessToken?: string;
     refreshToken?: string;
+    /** The Spotify user id, from `account.providerAccountId`. */
+    spotifyId?: string;
     /** Epoch in seconds at which the access token expires. */
     expiresAt?: number;
     error?: "RefreshTokenError";

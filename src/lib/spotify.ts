@@ -289,6 +289,132 @@ export async function getAllUserPlaylists(
   return all;
 }
 
+/**
+ * One entry of a playlist, flattened to what the JSON export needs.
+ * Podcast episodes have no artists or album, so they carry `type: "episode"` and
+ * borrow the show for those fields rather than pretending to be songs.
+ */
+export type ExportedTrack = {
+  name: string;
+  artists: string[];
+  album: string | null;
+  type?: "episode";
+};
+
+export type PlaylistTracksPage = {
+  items: ExportedTrack[];
+  /** Offset of the next page. null when there are no more. */
+  nextOffset: number | null;
+  total: number;
+};
+
+type RawMedia = {
+  type?: string;
+  name?: string | null;
+  album?: { name?: string | null } | null;
+  artists?: { name?: string | null }[] | null;
+  show?: { name?: string | null; publisher?: string | null } | null;
+} | null;
+
+type RawPlaylistItem = {
+  /** February 2026 renamed `track` to `item`; we read whichever one arrives. */
+  item?: RawMedia;
+  track?: RawMedia;
+};
+
+type PlaylistTracksResponse = {
+  items: RawPlaylistItem[];
+  next: string | null;
+  offset: number;
+  total: number;
+};
+
+function toExportedTrack(entry: RawPlaylistItem): ExportedTrack | null {
+  const media = entry.item ?? entry.track;
+
+  // Tracks removed from Spotify, or unavailable in the market, come back as null.
+  if (!media) return null;
+
+  if (media.type === "episode") {
+    return {
+      name: media.name ?? "Unknown episode",
+      artists: media.show?.publisher ? [media.show.publisher] : [],
+      album: media.show?.name ?? null,
+      type: "episode",
+    };
+  }
+
+  return {
+    name: media.name ?? "Unknown track",
+    artists: (media.artists ?? [])
+      .map((artist) => artist.name)
+      .filter((name): name is string => Boolean(name)),
+    album: media.album?.name ?? null,
+  };
+}
+
+/**
+ * Fetches one page of a playlist's contents, already flattened.
+ *
+ * February 2026 removed `GET /playlists/{id}/tracks` in favour of
+ * `GET /playlists/{id}/items`. The old path now answers 403, which is what the
+ * first version of this export ran into.
+ *
+ * That endpoint is ALSO restricted to playlists the user owns or collaborates on:
+ * anything else answers 403 no matter which scopes the token has. Callers are
+ * expected to handle that per playlist instead of failing the whole export.
+ *
+ * We deliberately do NOT use Spotify's `fields` projection: it would shrink the
+ * response a lot, but the `track` -> `item` rename makes the right projection
+ * ambiguous, and a wrong field name there is a 400 instead of a smaller payload.
+ */
+export async function getPlaylistItems(
+  accessToken: string,
+  playlistId: string,
+  { offset = 0, limit = 50 }: { offset?: number; limit?: number } = {},
+): Promise<PlaylistTracksPage> {
+  const params = new URLSearchParams({
+    // This endpoint caps at 50 per page, unlike the 100 the old one allowed.
+    limit: String(Math.min(Math.max(limit, 1), 50)),
+    offset: String(Math.max(offset, 0)),
+    // Without this, podcast episodes sitting in a playlist are skipped entirely.
+    additional_types: "track,episode",
+  });
+
+  const response = await spotifyFetch(
+    `/playlists/${encodeURIComponent(playlistId)}/items?${params}`,
+    accessToken,
+  );
+  const data = (await response.json()) as PlaylistTracksResponse;
+
+  const items: ExportedTrack[] = [];
+  for (const entry of data.items) {
+    const track = toExportedTrack(entry);
+    if (track) items.push(track);
+  }
+
+  return {
+    items,
+    // Based on the raw page length, not the filtered one, so skipped entries
+    // never make the pagination stall.
+    nextOffset: data.next ? data.offset + data.items.length : null,
+    total: data.total,
+  };
+}
+
+/**
+ * The signed-in user's Spotify id.
+ *
+ * Needed to tell apart the playlists the user owns. We cannot rely on the JWT
+ * `sub` for it: Auth.js fills that from whatever the provider's profile returned,
+ * and it is not guaranteed to be the Spotify user id.
+ */
+export async function getCurrentUserId(accessToken: string): Promise<string> {
+  const response = await spotifyFetch("/me", accessToken);
+  const { id } = (await response.json()) as { id: string };
+  return id;
+}
+
 export function sortPlaylistsByName(
   playlists: SpotifyPlaylist[],
 ): SpotifyPlaylist[] {

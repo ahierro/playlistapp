@@ -1,6 +1,8 @@
 import NextAuth from "next-auth";
 import Spotify from "next-auth/providers/spotify";
 
+import { getCurrentUserId } from "@/lib/spotify";
+
 /**
  * Permissions we request from Spotify.
  * - user-follow-read: artists the user follows
@@ -90,10 +92,23 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           ...token,
           accessToken: account.access_token,
           refreshToken: account.refresh_token,
+          // `providerAccountId` IS the Spotify user id, which the JWT `sub` is not
+          // guaranteed to be. We need it to tell which playlists the user owns.
+          spotifyId: account.providerAccountId,
           expiresAt:
             account.expires_at ?? Math.floor(Date.now() / 1000) + 3600,
           error: undefined,
         };
+      }
+
+      // 1b. Sessions issued before we started storing the id: fill it in once,
+      // so nobody has to sign out and back in for the playlist export to work.
+      if (!token.spotifyId && typeof token.accessToken === "string") {
+        try {
+          token.spotifyId = await getCurrentUserId(token.accessToken);
+        } catch (error) {
+          console.error("[auth] Could not read the Spotify user id", error);
+        }
       }
 
       // 2. The token is still valid.
@@ -129,6 +144,15 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       session.accessToken =
         typeof token.accessToken === "string" ? token.accessToken : undefined;
       session.error = token.error;
+
+      // The client uses this to scope its localStorage cache (so signing in with
+      // another account never reads the previous lists) and to tell which
+      // playlists the user owns. `sub` is only a fallback.
+      const id = token.spotifyId ?? token.sub;
+      if (session.user && typeof id === "string") {
+        session.user.id = id;
+      }
+
       return session;
     },
   },

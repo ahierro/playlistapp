@@ -3,41 +3,16 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { AppShell } from "@/components/app-shell";
 import { PlaylistsList } from "@/components/playlists-list";
-import { ScopeError } from "@/components/scope-error";
-import {
-  getAllUserPlaylists,
-  sortPlaylistsByName,
-  SpotifyApiError,
-  SpotifyAuthError,
-  type SpotifyPlaylist,
-} from "@/lib/spotify";
 
-/** Same approach as artists: everything at once, sorted alphabetically. */
+/**
+ * Same as artists: session guard only. `PlaylistsList` owns the fetch, the
+ * localStorage cache and the 403 (missing scope) case.
+ */
 export default async function PlaylistsPage() {
   const session = await auth();
 
   if (!session?.accessToken || session.error) {
     redirect("/");
-  }
-
-  let playlists: SpotifyPlaylist[] | null = null;
-  let scopeError: string | undefined;
-
-  try {
-    playlists = sortPlaylistsByName(
-      await getAllUserPlaylists(session.accessToken),
-    );
-  } catch (error) {
-    if (error instanceof SpotifyAuthError) {
-      redirect("/");
-    }
-    // 403 = the session is missing `playlist-read-private`, because the token was
-    // issued before the app requested that scope.
-    if (error instanceof SpotifyApiError && error.status === 403) {
-      scopeError = error.message;
-    } else {
-      throw error;
-    }
   }
 
   return (
@@ -46,11 +21,7 @@ export default async function PlaylistsPage() {
       userImage={session.user?.image}
       title="Your playlists"
     >
-      {playlists ? (
-        <PlaylistsList playlists={playlists} />
-      ) : (
-        <ScopeError detail={scopeError} />
-      )}
+      <PlaylistsList userId={session.user?.id ?? "unknown-user"} />
     </AppShell>
   );
 }
