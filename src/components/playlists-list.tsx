@@ -1,23 +1,37 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { RefreshCw, Search } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { FileJson, RefreshCw, Search } from "lucide-react";
 
 import { CardGridSkeleton } from "@/components/card-grid-skeleton";
-import { PlaylistExportDialog } from "@/components/playlist-export-dialog";
 import { PlaylistCard } from "@/components/playlist-card";
 import { ScopeError } from "@/components/scope-error";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatUpdatedAt } from "@/lib/client-cache";
+import {
+  buildPlaylistExport,
+  downloadJson,
+  type ExportProgress,
+} from "@/lib/playlist-export";
 import { sortPlaylistsByName, type SpotifyPlaylist } from "@/lib/spotify";
 import { fetchAllUserPlaylists } from "@/lib/spotify-client";
 import { useCachedList } from "@/lib/use-cached-list";
 import { cn } from "@/lib/utils";
 
+type PlaylistSelection =
+  | { mode: "all" }
+  | { mode: "custom"; ids: Set<string> };
+
 /** Same approach as artists: cache-first from localStorage, refresh on demand. */
 export function PlaylistsList({ userId }: { userId: string }) {
   const [query, setQuery] = useState("");
+  const [selection, setSelection] = useState<PlaylistSelection>({ mode: "all" });
+  const [exportProgress, setExportProgress] = useState<ExportProgress | null>(
+    null,
+  );
+  const [exportError, setExportError] = useState<string | null>(null);
+  const exportAbortRef = useRef<AbortController | null>(null);
 
   const {
     items,
@@ -34,18 +48,16 @@ export function PlaylistsList({ userId }: { userId: string }) {
     sort: sortPlaylistsByName,
   });
 
-  const playlists = useMemo(() => items ?? [], [items]);
-  const busy = isLoading || isRefreshing;
-
-  // Spotify only returns the contents of playlists the user owns or collaborates
-  // on; the rest answer 403. The export dialog offers this narrower set first.
-  const readablePlaylists = useMemo(
+  // External playlists are not useful here because Spotify will not expose their
+  // tracks. Keep only playlists owned by this user or explicitly collaborative.
+  const playlists = useMemo(
     () =>
-      playlists.filter(
+      (items ?? []).filter(
         (playlist) => playlist.owner.id === userId || playlist.collaborative,
       ),
-    [playlists, userId],
+    [items, userId],
   );
+  const busy = isLoading || isRefreshing;
 
   const filtered = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -57,7 +69,70 @@ export function PlaylistsList({ userId }: { userId: string }) {
     );
   }, [playlists, query]);
 
+  const selectedPlaylists = useMemo(
+    () =>
+      selection.mode === "all"
+        ? playlists
+        : playlists.filter((playlist) => selection.ids.has(playlist.id)),
+    [playlists, selection],
+  );
+
   const updatedLabel = formatUpdatedAt(updatedAt);
+  const exportRunning = exportProgress !== null;
+  const allSelected =
+    playlists.length > 0 && selectedPlaylists.length === playlists.length;
+
+  function changeSelection(playlistId: string, selected: boolean) {
+    setSelection((current) => {
+      const ids =
+        current.mode === "all"
+          ? new Set(playlists.map((playlist) => playlist.id))
+          : new Set(current.ids);
+
+      if (selected) ids.add(playlistId);
+      else ids.delete(playlistId);
+
+      return ids.size === playlists.length
+        ? { mode: "all" }
+        : { mode: "custom", ids };
+    });
+  }
+
+  async function exportSelected() {
+    if (selectedPlaylists.length === 0) return;
+
+    const controller = new AbortController();
+    exportAbortRef.current = controller;
+    setExportError(null);
+    setExportProgress({
+      done: 0,
+      total: selectedPlaylists.length,
+      current: "",
+      unreadable: 0,
+    });
+
+    try {
+      const data = await buildPlaylistExport(selectedPlaylists, {
+        signal: controller.signal,
+        onProgress: setExportProgress,
+      });
+      const date = new Date().toISOString().slice(0, 10);
+      downloadJson(data, `playlists-${date}.json`);
+      setExportProgress(null);
+    } catch (cause) {
+      setExportProgress(null);
+      if (controller.signal.aborted) return;
+      setExportError(
+        cause instanceof Error ? cause.message : "The export failed",
+      );
+    } finally {
+      exportAbortRef.current = null;
+    }
+  }
+
+  const exportPercent = exportProgress?.total
+    ? Math.round((exportProgress.done / exportProgress.total) * 100)
+    : 0;
 
   // 403 = the session is missing `playlist-read-private`, because the token was
   // issued before the app requested that scope. Signing in again is the only fix.
@@ -100,19 +175,86 @@ export function PlaylistsList({ userId }: { userId: string }) {
             variant="outline"
             size="icon"
             onClick={refresh}
-            disabled={busy}
+            disabled={busy || exportRunning}
             title="Discard the cache and fetch the list again from Spotify"
           >
             <RefreshCw className={cn(busy && "animate-spin")} />
             <span className="sr-only">Refresh from Spotify</span>
           </Button>
-
-          <PlaylistExportDialog
-            playlists={playlists}
-            readablePlaylists={readablePlaylists}
-          />
         </div>
       </div>
+
+      {items && playlists.length > 0 && (
+        <div className="flex flex-col gap-3 rounded-xl border bg-muted/25 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-muted-foreground">
+              {selectedPlaylists.length} of {playlists.length} selected
+            </p>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSelection({ mode: "all" })}
+                disabled={allSelected || exportRunning}
+              >
+                Select all
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  setSelection({ mode: "custom", ids: new Set() })
+                }
+                disabled={selectedPlaylists.length === 0 || exportRunning}
+              >
+                Deselect all
+              </Button>
+
+              {exportRunning ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => exportAbortRef.current?.abort()}
+                >
+                  Cancel export
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  onClick={exportSelected}
+                  disabled={selectedPlaylists.length === 0 || busy}
+                >
+                  <FileJson />
+                  Export selected
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {exportProgress && (
+            <div className="flex flex-col gap-1.5" aria-live="polite">
+              <div
+                className="h-2 overflow-hidden rounded-full bg-muted"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={exportProgress.total}
+                aria-valuenow={exportProgress.done}
+              >
+                <div
+                  className="h-full rounded-full bg-primary transition-[width] duration-300"
+                  style={{ width: `${exportPercent}%` }}
+                />
+              </div>
+              <p className="truncate text-xs text-muted-foreground">
+                {exportProgress.done} / {exportProgress.total} playlists
+                {exportProgress.current &&
+                  ` · Reading “${exportProgress.current}”…`}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {missingScope !== null && (
         <ScopeError detail={missingScope} />
@@ -121,6 +263,12 @@ export function PlaylistsList({ userId }: { userId: string }) {
       {error && (
         <p className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm">
           {error}
+        </p>
+      )}
+
+      {exportError && (
+        <p className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm">
+          {exportError}
         </p>
       )}
 
@@ -136,7 +284,15 @@ export function PlaylistsList({ userId }: { userId: string }) {
         <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {filtered.map((playlist) => (
             <li key={playlist.id}>
-              <PlaylistCard playlist={playlist} />
+              <PlaylistCard
+                playlist={playlist}
+                selected={
+                  selection.mode === "all" || selection.ids.has(playlist.id)
+                }
+                onSelectedChange={(selected) =>
+                  changeSelection(playlist.id, selected)
+                }
+              />
             </li>
           ))}
         </ul>

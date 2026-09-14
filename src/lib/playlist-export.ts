@@ -1,5 +1,6 @@
 import type { ExportedTrack, SpotifyPlaylist } from "@/lib/spotify";
 import { fetchAllPlaylistTracks, MissingScopeError } from "@/lib/spotify-client";
+import { stripSpotifyEditionNoise } from "@/lib/spotify-title-cleaner";
 
 export type ExportedPlaylist = {
   id: string;
@@ -80,7 +81,15 @@ export async function buildPlaylistExport(
     };
 
     try {
-      entry.tracks = await fetchAllPlaylistTracks(playlist.id, signal);
+      const tracks = await fetchAllPlaylistTracks(playlist.id, signal);
+      entry.tracks = tracks.map((track) => ({
+        ...track,
+        name: stripSpotifyEditionNoise(track.name),
+        album:
+          track.album === null
+            ? null
+            : stripSpotifyEditionNoise(track.album),
+      }));
       entry.trackCount = entry.tracks.length;
       trackCount += entry.trackCount;
     } catch (cause) {
