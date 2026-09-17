@@ -1,69 +1,123 @@
-import { ListMusic, Users } from "lucide-react";
+import { ListMusic, Music, Users } from "lucide-react";
 
-import { auth } from "@/auth";
 import { AppShell } from "@/components/app-shell";
 import { SectionLink } from "@/components/section-link";
 import { SignInButton } from "@/components/auth-buttons";
+import { getAccounts } from "@/lib/accounts";
+import { SERVICE_LABELS, type MusicService } from "@/lib/music";
+import { SERVICES } from "@/lib/services";
+
+const ORDER: MusicService[] = ["spotify", "youtube-music"];
+
+const DESCRIPTIONS: Record<MusicService, { artists: string; playlists: string }> = {
+  spotify: {
+    artists: "Every artist you follow, alphabetically.",
+    playlists: "Your playlists, with a JSON export of their tracks.",
+  },
+  "youtube-music": {
+    artists: "Artist channels you are subscribed to.",
+    playlists: "Your playlists and liked videos, with a JSON export.",
+  },
+};
 
 /**
- * Signed out: the sign-in screen.
- * Signed in: an empty home with two cards, so the user picks Artists or
- * Playlists instead of always landing on Artists first.
+ * Signed out of everything: the sign-in screen, with one button per service.
+ * Otherwise: one pair of cards per connected service, plus a prompt to connect
+ * the other one. Both accounts can be connected at the same time.
  */
 export default async function HomePage() {
-  const session = await auth();
-  const signedIn = Boolean(session?.accessToken && !session.error);
+  const accounts = await getAccounts();
+  const connected = ORDER.filter((service) => accounts[service]);
 
-  if (!signedIn) {
+  const expiredNotice =
+    accounts.expired.length > 0 ? (
+      <p className="text-sm text-destructive" role="alert">
+        Your {accounts.expired.map((s) => SERVICE_LABELS[s]).join(" and ")}{" "}
+        session expired. Please sign in again.
+      </p>
+    ) : null;
+
+  if (connected.length === 0) {
     return (
       <main className="flex flex-1 items-center justify-center px-6 py-16">
         <div className="flex max-w-md flex-col items-center gap-6 text-center">
           <div className="flex size-14 items-center justify-center rounded-full bg-primary/15 text-primary">
-            <Users className="size-7" />
+            <Music className="size-7" />
           </div>
 
           <div className="space-y-2">
             <h1 className="text-3xl font-bold tracking-tight">
-              My followed artists
+              Your music library
             </h1>
             <p className="text-muted-foreground">
-              Sign in with your Spotify account and we will list every artist
-              you follow. We store nothing: the tokens live in the session
-              cookie.
+              Sign in with Spotify, YouTube Music or both, and we will list
+              your artists and playlists. We store nothing: the tokens live in
+              the session cookies.
             </p>
           </div>
 
-          <SignInButton />
+          <div className="flex w-full flex-col items-stretch gap-3">
+            {ORDER.map((service) => (
+              <SignInButton key={service} service={service} className="w-full" />
+            ))}
+          </div>
 
-          {session?.error && (
-            <p className="text-sm text-destructive" role="alert">
-              Your Spotify session expired. Please sign in again.
-            </p>
-          )}
+          {expiredNotice}
         </div>
       </main>
     );
   }
 
+  const missing = ORDER.filter((service) => !accounts[service]);
+
   return (
-    <AppShell
-      userName={session!.user?.name}
-      userImage={session!.user?.image}
-      title="What do you want to see?"
-    >
-      <div className="mx-auto grid max-w-2xl gap-4 sm:grid-cols-2">
-        <SectionLink
-          href="/artists"
-          icon={Users}
-          label="Artists"
-          description="Every artist you follow, alphabetically."
-        />
-        <SectionLink
-          href="/playlists"
-          icon={ListMusic}
-          label="Playlists"
-          description="Your playlists, with a JSON export of their tracks."
-        />
+    <AppShell accounts={accounts} title="What do you want to see?">
+      <div className="mx-auto flex max-w-2xl flex-col gap-8">
+        {expiredNotice}
+
+        {connected.map((service) => {
+          const { basePath, label, icon: Icon } = SERVICES[service];
+
+          return (
+            <section key={service} className="flex flex-col gap-3">
+              <h2 className="flex items-center gap-2 text-sm font-semibold tracking-wide text-muted-foreground uppercase">
+                <Icon className="size-4" />
+                {label}
+              </h2>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <SectionLink
+                  href={`${basePath}/artists`}
+                  icon={Users}
+                  label="Artists"
+                  description={DESCRIPTIONS[service].artists}
+                />
+                <SectionLink
+                  href={`${basePath}/playlists`}
+                  icon={ListMusic}
+                  label="Playlists"
+                  description={DESCRIPTIONS[service].playlists}
+                />
+              </div>
+            </section>
+          );
+        })}
+
+        {missing.map((service) => (
+          <section
+            key={service}
+            className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed p-5"
+          >
+            <p className="text-sm text-muted-foreground">
+              Also use {SERVICE_LABELS[service]}? Both accounts can stay
+              connected.
+            </p>
+            <SignInButton
+              service={service}
+              size="sm"
+              label={`Connect ${SERVICE_LABELS[service]}`}
+            />
+          </section>
+        ))}
       </div>
     </AppShell>
   );

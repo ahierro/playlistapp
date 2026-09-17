@@ -5,11 +5,12 @@ import { Download, RefreshCw, Search } from "lucide-react";
 
 import { ArtistCard } from "@/components/artist-card";
 import { CardGridSkeleton } from "@/components/card-grid-skeleton";
+import { ScopeError } from "@/components/scope-error";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatUpdatedAt } from "@/lib/client-cache";
-import { sortArtistsByName, type SpotifyArtist } from "@/lib/spotify";
-import { fetchAllFollowedArtists } from "@/lib/spotify-client";
+import type { ArtistSummary, MusicService } from "@/lib/music";
+import { SERVICES } from "@/lib/services";
 import { useCachedList } from "@/lib/use-cached-list";
 import { cn } from "@/lib/utils";
 
@@ -17,20 +18,34 @@ import { cn } from "@/lib/utils";
  * Owns the artist list end to end.
  *
  * The list is read from localStorage on mount, so coming back to this page paints
- * instantly and costs zero Spotify requests. Only an empty cache or the refresh
+ * instantly and costs zero API requests. Only an empty cache or the refresh
  * button walks the pagination again. Filtering stays in memory, which is instant
  * for a few thousand artists.
  */
-export function FollowedArtists({ userId }: { userId: string }) {
+export function FollowedArtists({
+  userId,
+  service,
+}: {
+  userId: string;
+  service: MusicService;
+}) {
   const [query, setQuery] = useState("");
+  const config = SERVICES[service];
 
-  const { items, updatedAt, isLoading, isRefreshing, error, refresh } =
-    useCachedList<SpotifyArtist>({
-      cacheKey: "followed-artists",
-      scope: userId,
-      fetchAll: fetchAllFollowedArtists,
-      sort: sortArtistsByName,
-    });
+  const {
+    items,
+    updatedAt,
+    isLoading,
+    isRefreshing,
+    error,
+    missingScope,
+    refresh,
+  } = useCachedList<ArtistSummary>({
+    cacheKey: config.artists.cacheKey,
+    scope: userId,
+    fetchAll: config.artists.fetchAll,
+    sort: config.artists.sort,
+  });
 
   const artists = useMemo(() => items ?? [], [items]);
   const busy = isLoading || isRefreshing;
@@ -41,7 +56,7 @@ export function FollowedArtists({ userId }: { userId: string }) {
     return artists.filter(
       (artist) =>
         artist.name.toLowerCase().includes(term) ||
-        artist.genres?.some((genre) => genre.includes(term)),
+        artist.genres.some((genre) => genre.toLowerCase().includes(term)),
     );
   }, [artists, query]);
 
@@ -83,10 +98,10 @@ export function FollowedArtists({ userId }: { userId: string }) {
             size="icon"
             onClick={refresh}
             disabled={busy}
-            title="Discard the cache and fetch the list again from Spotify"
+            title={`Discard the cache and fetch the list again from ${config.label}`}
           >
             <RefreshCw className={cn(busy && "animate-spin")} />
-            <span className="sr-only">Refresh from Spotify</span>
+            <span className="sr-only">Refresh from {config.label}</span>
           </Button>
 
           <Button
@@ -95,7 +110,7 @@ export function FollowedArtists({ userId }: { userId: string }) {
             size="icon"
             title="Download a .txt with every artist"
           >
-            <a href="/api/spotify/following/export" download>
+            <a href={config.artists.exportUrl} download>
               <Download />
               <span className="sr-only">
                 Download the complete list as .txt
@@ -104,6 +119,10 @@ export function FollowedArtists({ userId }: { userId: string }) {
           </Button>
         </div>
       </div>
+
+      {missingScope !== null && (
+        <ScopeError service={service} detail={missingScope} />
+      )}
 
       {error && (
         <p className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm">

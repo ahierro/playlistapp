@@ -31,7 +31,7 @@ export type CachedList<T> = {
   /** A refresh on top of a list that is already on screen. */
   isRefreshing: boolean;
   error: string | null;
-  /** Set when Spotify answered 403: the session predates a scope we need. */
+  /** Set when the API answered 403: a permission (scope) the app needs is missing. */
   missingScope: string | null;
   refresh: () => void;
 };

@@ -1,25 +1,67 @@
 import { LogIn, LogOut } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { signInWithSpotify, signOutOfSpotify } from "@/lib/auth-actions";
+import {
+  signInWithSpotify,
+  signInWithYouTubeMusic,
+  signOutOfSpotify,
+  signOutOfYouTubeMusic,
+} from "@/lib/auth-actions";
+import { SERVICE_LABELS, type MusicService } from "@/lib/music";
 
-export function SignInButton({ className }: { className?: string }) {
+const SIGN_IN = {
+  spotify: signInWithSpotify,
+  "youtube-music": signInWithYouTubeMusic,
+} satisfies Record<MusicService, () => Promise<void>>;
+
+const SIGN_OUT = {
+  spotify: signOutOfSpotify,
+  "youtube-music": signOutOfYouTubeMusic,
+} satisfies Record<MusicService, () => Promise<void>>;
+
+export function SignInButton({
+  service,
+  className,
+  size = "lg",
+  variant = "default",
+  label,
+}: {
+  service: MusicService;
+  className?: string;
+  size?: "lg" | "sm" | "default";
+  variant?: "default" | "outline";
+  label?: string;
+}) {
   return (
-    <form action={signInWithSpotify}>
-      <Button type="submit" size="lg" className={className}>
+    <form action={SIGN_IN[service]}>
+      <Button type="submit" size={size} variant={variant} className={className}>
         <LogIn />
-        Sign in with Spotify
+        {label ?? `Sign in with ${SERVICE_LABELS[service]}`}
       </Button>
     </form>
   );
 }
 
-export function SignOutButton() {
+/** Signs out of ONE service; the other session is left alone. */
+export function SignOutButton({
+  service,
+  compact = false,
+}: {
+  service: MusicService;
+  compact?: boolean;
+}) {
+  const label = `Sign out of ${SERVICE_LABELS[service]}`;
+
   return (
-    <form action={signOutOfSpotify}>
-      <Button type="submit" variant="outline" size="sm">
+    <form action={SIGN_OUT[service]}>
+      <Button
+        type="submit"
+        variant="outline"
+        size={compact ? "icon" : "sm"}
+        title={label}
+      >
         <LogOut />
-        Sign out
+        {compact ? <span className="sr-only">{label}</span> : label}
       </Button>
     </form>
   );

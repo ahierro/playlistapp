@@ -1,3 +1,5 @@
+import type { ExportedTrack } from "@/lib/music";
+
 const API_BASE = "https://api.spotify.com/v1";
 
 /** The access token is no longer usable (expired / revoked / missing scope). */
@@ -289,17 +291,7 @@ export async function getAllUserPlaylists(
   return all;
 }
 
-/**
- * One entry of a playlist, flattened to what the JSON export needs.
- * Podcast episodes have no artists or album, so they carry `type: "episode"` and
- * borrow the show for those fields rather than pretending to be songs.
- */
-export type ExportedTrack = {
-  name: string;
-  artists: string[];
-  album: string | null;
-  type?: "episode";
-};
+export type { ExportedTrack };
 
 export type PlaylistTracksPage = {
   items: ExportedTrack[];

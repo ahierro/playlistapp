@@ -8,11 +8,11 @@
  * mounted on the same list share one request instead of racing.
  *
  * The policy is cache-first with no automatic revalidation: a cache hit issues no
- * request at all, and after the first load only `refreshList` goes back to Spotify.
+ * request at all, and after the first load only `refreshList` goes back to the API.
  */
 
 import { readCache, writeCache, type CacheEntry } from "@/lib/client-cache";
-import { MissingScopeError, SessionExpiredError } from "@/lib/spotify-client";
+import { MissingScopeError, SessionExpiredError } from "@/lib/api-client";
 
 export type ListStatus =
   /** Nothing to show yet; the first fetch is in flight or about to start. */
@@ -21,9 +21,9 @@ export type ListStatus =
   | "refreshing"
   | "ready"
   | "error"
-  /** Spotify answered 403: the session predates a scope we now need. */
+  /** The API answered 403: a permission (scope) the app needs is missing. */
   | "missing-scope"
-  /** Spotify answered 401: the session is gone and the user has to sign in again. */
+  /** The API answered 401: the session is gone and the user has to sign in again. */
   | "session-expired";
 
 export type ListState<T> = {
@@ -140,7 +140,7 @@ async function run<T>(
       entry: previous,
       status: "error",
       error:
-        cause instanceof Error ? cause.message : "Could not reach Spotify",
+        cause instanceof Error ? cause.message : "Could not reach the music service",
     });
   } finally {
     if (inFlight.get(key) === controller) inFlight.delete(key);
@@ -165,7 +165,7 @@ export function ensureListLoaded<T>(
   void run(name, scope, fetchAll, sort);
 }
 
-/** Explicit refresh: always goes back to Spotify and overwrites the cache. */
+/** Explicit refresh: always goes back to the API and overwrites the cache. */
 export function refreshList<T>(
   name: string,
   scope: string,

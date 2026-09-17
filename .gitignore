@@ -46,3 +46,6 @@ next-env.d.ts
 
 # contains the client secret
 setup-env.ps1
+
+# local diagnostics
+/logs

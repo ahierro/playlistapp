@@ -1,11 +1,7 @@
 import Image from "next/image";
 import { ExternalLink, ListMusic, Lock, Users2 } from "lucide-react";
 
-import {
-  pickPlaylistImage,
-  playlistTrackCount,
-  type SpotifyPlaylist,
-} from "@/lib/spotify";
+import type { PlaylistSummary } from "@/lib/music";
 import { cn } from "@/lib/utils";
 
 const formatter = new Intl.NumberFormat("en-US");
@@ -15,17 +11,16 @@ export function PlaylistCard({
   selected,
   onSelectedChange,
 }: {
-  playlist: SpotifyPlaylist;
+  playlist: PlaylistSummary;
   selected: boolean;
   onSelectedChange: (selected: boolean) => void;
 }) {
-  const image = pickPlaylistImage(playlist);
-  const total = playlistTrackCount(playlist);
+  const total = playlist.trackCount;
 
   return (
     <div className="relative">
       <a
-        href={playlist.external_urls.spotify}
+        href={playlist.url}
         target="_blank"
         rel="noreferrer"
         className={cn(
@@ -34,9 +29,9 @@ export function PlaylistCard({
         )}
       >
         <div className="relative aspect-square w-full overflow-hidden rounded-md bg-muted">
-          {image ? (
+          {playlist.imageUrl ? (
             <Image
-              src={image.url}
+              src={playlist.imageUrl}
               alt={playlist.name}
               fill
               sizes="(max-width: 640px) 45vw, (max-width: 1024px) 22vw, 200px"
@@ -57,7 +52,7 @@ export function PlaylistCard({
 
           <p className="truncate text-sm text-muted-foreground">
             {total === null ? "—" : `${formatter.format(total)} tracks`}
-            {playlist.owner.display_name && ` · ${playlist.owner.display_name}`}
+            {playlist.ownerName && ` · ${playlist.ownerName}`}
           </p>
 
           <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground/80">
@@ -67,7 +62,7 @@ export function PlaylistCard({
                 Collaborative
               </span>
             )}
-            {playlist.public === false && !playlist.collaborative && (
+            {playlist.isPublic === false && !playlist.collaborative && (
               <span className="flex items-center gap-1">
                 <Lock className="size-3" />
                 Private

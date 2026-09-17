@@ -5,8 +5,9 @@ import { GeistSans } from "geist/font/sans";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Playlist App · My followed artists",
-  description: "Sign in with Spotify and see the artists you follow.",
+  title: "Playlist App · Your music library",
+  description:
+    "Sign in with Spotify and/or YouTube Music and see your artists and playlists.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

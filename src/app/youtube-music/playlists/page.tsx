@@ -8,17 +8,17 @@ import { getAccounts } from "@/lib/accounts";
  * Session guard only. `PlaylistsList` owns the fetch, the localStorage cache and
  * the 403 (missing permission) case.
  */
-export default async function PlaylistsPage() {
+export default async function YouTubeMusicPlaylistsPage() {
   const accounts = await getAccounts();
-  const account = accounts["spotify"];
+  const account = accounts["youtube-music"];
 
   if (!account) {
     redirect("/");
   }
 
   return (
-    <AppShell accounts={accounts} title="Your Spotify playlists">
-      <PlaylistsList userId={account.id} service="spotify" />
+    <AppShell accounts={accounts} title="Your YouTube Music playlists">
+      <PlaylistsList userId={account.id} service="youtube-music" />
     </AppShell>
   );
 }

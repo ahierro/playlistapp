@@ -9,12 +9,18 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1"],
 
   images: {
-    // Hosts from which Spotify serves artist and profile pictures.
+    // Hosts from which Spotify and Google/YouTube serve pictures.
     remotePatterns: [
       { protocol: "https", hostname: "i.scdn.co" },
       { protocol: "https", hostname: "mosaic.scdn.co" },
       { protocol: "https", hostname: "*.spotifycdn.com" },
       { protocol: "https", hostname: "*.fbsbx.com" },
+      // Google profile pictures and YouTube channel / playlist thumbnails.
+      { protocol: "https", hostname: "lh3.googleusercontent.com" },
+      { protocol: "https", hostname: "yt3.ggpht.com" },
+      { protocol: "https", hostname: "yt3.googleusercontent.com" },
+      { protocol: "https", hostname: "i.ytimg.com" },
+      { protocol: "https", hostname: "i9.ytimg.com" },
     ],
   },
 

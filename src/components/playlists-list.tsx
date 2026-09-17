@@ -14,8 +14,8 @@ import {
   downloadJson,
   type ExportProgress,
 } from "@/lib/playlist-export";
-import { sortPlaylistsByName, type SpotifyPlaylist } from "@/lib/spotify";
-import { fetchAllUserPlaylists } from "@/lib/spotify-client";
+import type { MusicService, PlaylistSummary } from "@/lib/music";
+import { SERVICES } from "@/lib/services";
 import { useCachedList } from "@/lib/use-cached-list";
 import { cn } from "@/lib/utils";
 
@@ -24,7 +24,14 @@ type PlaylistSelection =
   | { mode: "custom"; ids: Set<string> };
 
 /** Same approach as artists: cache-first from localStorage, refresh on demand. */
-export function PlaylistsList({ userId }: { userId: string }) {
+export function PlaylistsList({
+  userId,
+  service,
+}: {
+  userId: string;
+  service: MusicService;
+}) {
+  const config = SERVICES[service];
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<PlaylistSelection>({ mode: "all" });
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(
@@ -41,21 +48,19 @@ export function PlaylistsList({ userId }: { userId: string }) {
     error,
     missingScope,
     refresh,
-  } = useCachedList<SpotifyPlaylist>({
-    cacheKey: "playlists",
+  } = useCachedList<PlaylistSummary>({
+    cacheKey: config.playlists.cacheKey,
     scope: userId,
-    fetchAll: fetchAllUserPlaylists,
-    sort: sortPlaylistsByName,
+    fetchAll: config.playlists.fetchAll,
+    sort: config.playlists.sort,
   });
 
-  // External playlists are not useful here because Spotify will not expose their
-  // tracks. Keep only playlists owned by this user or explicitly collaborative.
+  // Playlists whose tracks the service will not expose are useless here (for
+  // Spotify, anything the user neither owns nor collaborates on).
+  const { isReadable } = config.playlists;
   const playlists = useMemo(
-    () =>
-      (items ?? []).filter(
-        (playlist) => playlist.owner.id === userId || playlist.collaborative,
-      ),
-    [items, userId],
+    () => (items ?? []).filter((playlist) => isReadable(playlist, userId)),
+    [items, userId, isReadable],
   );
   const busy = isLoading || isRefreshing;
 
@@ -65,7 +70,7 @@ export function PlaylistsList({ userId }: { userId: string }) {
     return playlists.filter(
       (playlist) =>
         playlist.name.toLowerCase().includes(term) ||
-        playlist.owner.display_name?.toLowerCase().includes(term),
+        playlist.ownerName?.toLowerCase().includes(term),
     );
   }, [playlists, query]);
 
@@ -113,11 +118,13 @@ export function PlaylistsList({ userId }: { userId: string }) {
 
     try {
       const data = await buildPlaylistExport(selectedPlaylists, {
+        service,
+        fetchTracks: config.playlists.fetchTracks,
         signal: controller.signal,
         onProgress: setExportProgress,
       });
       const date = new Date().toISOString().slice(0, 10);
-      downloadJson(data, `playlists-${date}.json`);
+      downloadJson(data, `${config.playlists.exportFilePrefix}-${date}.json`);
       setExportProgress(null);
     } catch (cause) {
       setExportProgress(null);
@@ -134,10 +141,10 @@ export function PlaylistsList({ userId }: { userId: string }) {
     ? Math.round((exportProgress.done / exportProgress.total) * 100)
     : 0;
 
-  // 403 = the session is missing `playlist-read-private`, because the token was
-  // issued before the app requested that scope. Signing in again is the only fix.
+  // 403 = the session is missing a permission (a scope added after the token was
+  // issued, or one the user unticked on the consent screen). Signing in again fixes it.
   if (missingScope !== null && !items) {
-    return <ScopeError detail={missingScope} />;
+    return <ScopeError service={service} detail={missingScope} />;
   }
 
   return (
@@ -176,10 +183,10 @@ export function PlaylistsList({ userId }: { userId: string }) {
             size="icon"
             onClick={refresh}
             disabled={busy || exportRunning}
-            title="Discard the cache and fetch the list again from Spotify"
+            title={`Discard the cache and fetch the list again from ${config.label}`}
           >
             <RefreshCw className={cn(busy && "animate-spin")} />
-            <span className="sr-only">Refresh from Spotify</span>
+            <span className="sr-only">Refresh from {config.label}</span>
           </Button>
         </div>
       </div>
@@ -257,7 +264,7 @@ export function PlaylistsList({ userId }: { userId: string }) {
       )}
 
       {missingScope !== null && (
-        <ScopeError detail={missingScope} />
+        <ScopeError service={service} detail={missingScope} />
       )}
 
       {error && (

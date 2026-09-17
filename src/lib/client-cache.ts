@@ -1,7 +1,7 @@
 /**
- * localStorage layer for lists that cost a full Spotify pagination walk.
+ * localStorage layer for lists that cost a full pagination walk (Spotify or YouTube Music).
  *
- * Pure storage: read, write, clear. Deciding *when* to go back to Spotify is
+ * Pure storage: read, write, clear. Deciding *when* to go back to the API is
  * `@/lib/list-store`'s job.
  *
  * Every access is wrapped in try/catch: localStorage throws in private windows,
@@ -12,11 +12,11 @@
 const PREFIX = "playlistapp";
 
 /** Bump this when the cached shape changes, so old entries are ignored instead of crashing the UI. */
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 
 export type CacheEntry<T> = {
   version: number;
-  /** Epoch ms of the moment the data came back from Spotify. */
+  /** Epoch ms of the moment the data came back from the API. */
   updatedAt: number;
   data: T;
 };

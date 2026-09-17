@@ -1,6 +1,6 @@
-import type { ExportedTrack, SpotifyPlaylist } from "@/lib/spotify";
-import { fetchAllPlaylistTracks, MissingScopeError } from "@/lib/spotify-client";
-import { stripSpotifyEditionNoise } from "@/lib/spotify-title-cleaner";
+import type { ExportedTrack, MusicService, PlaylistSummary } from "@/lib/music";
+import { MissingScopeError } from "@/lib/api-client";
+import { cleanExportedTrack } from "@/lib/services";
 
 export type ExportedPlaylist = {
   id: string;
@@ -10,19 +10,19 @@ export type ExportedPlaylist = {
   trackCount: number;
   tracks: ExportedTrack[];
   /**
-   * Set when Spotify refused to hand over the contents. Since February 2026 that
-   * happens for every playlist the user neither owns nor collaborates on, whatever
-   * scopes the token has, so the entry keeps the playlist's metadata and an empty
-   * track list rather than disappearing from the file.
+   * Set when the service refused to hand over the contents (Spotify does that for
+   * every playlist the user neither owns nor collaborates on). The entry keeps the
+   * playlist's metadata and an empty track list rather than disappearing.
    */
   unreadable?: true;
 };
 
 export type PlaylistExport = {
+  service: MusicService;
   exportedAt: string;
   playlistCount: number;
   trackCount: number;
-  /** How many playlists Spotify would not let us read. */
+  /** How many playlists the service would not let us read. */
   unreadableCount: number;
   playlists: ExportedPlaylist[];
 };
@@ -33,7 +33,7 @@ export type ExportProgress = {
   total: number;
   /** Name of the playlist being fetched right now. */
   current: string;
-  /** Playlists Spotify refused so far. */
+  /** Playlists refused so far. */
   unreadable: number;
 };
 
@@ -42,18 +42,22 @@ export type ExportProgress = {
  * serialized.
  *
  * One playlist at a time, on purpose: a playlist can be several pages long, and
- * firing them all at once is the fastest way to a 429. Sequential also keeps the
- * progress counter meaningful.
+ * firing them all at once is the fastest way to a rate limit. Sequential also
+ * keeps the progress counter meaningful.
  */
 export async function buildPlaylistExport(
-  playlists: SpotifyPlaylist[],
+  playlists: PlaylistSummary[],
   {
+    service,
+    fetchTracks,
     signal,
     onProgress,
   }: {
+    service: MusicService;
+    fetchTracks: (id: string, signal?: AbortSignal) => Promise<ExportedTrack[]>;
     signal?: AbortSignal;
     onProgress?: (progress: ExportProgress) => void;
-  } = {},
+  },
 ): Promise<PlaylistExport> {
   const exported: ExportedPlaylist[] = [];
   let trackCount = 0;
@@ -74,22 +78,15 @@ export async function buildPlaylistExport(
     const entry: ExportedPlaylist = {
       id: playlist.id,
       name: playlist.name,
-      owner: playlist.owner.display_name ?? null,
-      url: playlist.external_urls.spotify,
+      owner: playlist.ownerName,
+      url: playlist.url,
       trackCount: 0,
       tracks: [],
     };
 
     try {
-      const tracks = await fetchAllPlaylistTracks(playlist.id, signal);
-      entry.tracks = tracks.map((track) => ({
-        ...track,
-        name: stripSpotifyEditionNoise(track.name),
-        album:
-          track.album === null
-            ? null
-            : stripSpotifyEditionNoise(track.album),
-      }));
+      const tracks = await fetchTracks(playlist.id, signal);
+      entry.tracks = tracks.map(cleanExportedTrack);
       entry.trackCount = entry.tracks.length;
       trackCount += entry.trackCount;
     } catch (cause) {
@@ -110,6 +107,7 @@ export async function buildPlaylistExport(
   });
 
   return {
+    service,
     exportedAt: new Date().toISOString(),
     playlistCount: exported.length,
     trackCount,
