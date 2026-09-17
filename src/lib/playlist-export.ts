@@ -86,7 +86,11 @@ export async function buildPlaylistExport(
 
     try {
       const tracks = await fetchTracks(playlist.id, signal);
-      entry.tracks = tracks.map(cleanExportedTrack);
+      entry.tracks = tracks.map((track) => {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { durationMs, ...rest } = cleanExportedTrack(track);
+        return rest;
+      });
       entry.trackCount = entry.tracks.length;
       trackCount += entry.trackCount;
     } catch (cause) {

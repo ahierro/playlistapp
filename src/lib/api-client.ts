@@ -19,6 +19,28 @@ export class MissingScopeError extends Error {
   }
 }
 
+/**
+ * The route answered 429: a rate limit, or for YouTube the daily quota. The
+ * copy queue pauses on it instead of failing.
+ */
+export class QuotaExceededError extends Error {
+  constructor(message = "The API quota is exhausted") {
+    super(message);
+    this.name = "QuotaExceededError";
+  }
+}
+
+/** Any other non-2xx answer, with its status kept for callers that care. */
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 /** Safety cap for every pagination walk: 50 items * 200 pages = 10,000. */
 export const MAX_PAGES = 200;
 
@@ -33,18 +55,61 @@ export async function getJson<T>(
     | (T & { error?: string })
     | null;
 
-  if (response.status === 401) throw new SessionExpiredError(body?.error);
-  if (response.status === 403) throw new MissingScopeError(body?.error);
-
-  if (!response.ok) {
-    throw new Error(
-      body?.error ?? `${service} request failed (${response.status})`,
-    );
-  }
+  throwForStatus(response, body?.error, service);
 
   if (!body) throw new Error(`${service} returned an empty response`);
 
   return body;
+}
+
+function throwForStatus(
+  response: Response,
+  message: string | undefined,
+  service: string,
+) {
+  if (response.status === 401) throw new SessionExpiredError(message);
+  if (response.status === 403) throw new MissingScopeError(message);
+  if (response.status === 429) throw new QuotaExceededError(message);
+
+  if (!response.ok) {
+    throw new ApiError(
+      message ?? `${service} request failed (${response.status})`,
+      response.status,
+    );
+  }
+}
+
+/** POST / DELETE to one of our routes. Resolves to null on 204. */
+export async function sendJson<T>(
+  url: string,
+  {
+    method,
+    body,
+    service,
+    signal,
+  }: {
+    method: "POST" | "DELETE";
+    body?: unknown;
+    service: string;
+    signal?: AbortSignal;
+  },
+): Promise<T | null> {
+  const response = await fetch(url, {
+    method,
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    cache: "no-store",
+    signal,
+  });
+
+  if (response.status === 204) return null;
+
+  const data = (await response.json().catch(() => null)) as
+    | (T & { error?: string })
+    | null;
+
+  throwForStatus(response, data?.error, service);
+  return data;
 }
 
 /**

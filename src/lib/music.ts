@@ -32,6 +32,11 @@ export type PlaylistSummary = {
   imageUrl: string | null;
   trackCount: number | null;
   url: string;
+  /**
+   * YouTube only: whether the playlist looks like music (see `getMusicShare`).
+   * Undefined for services where every playlist is music.
+   */
+  isMusic?: boolean;
 };
 
 /**
@@ -44,6 +49,11 @@ export type ExportedTrack = {
   artists: string[];
   album: string | null;
   type?: "episode";
+  /**
+   * Used to match the track on YouTube. Not written to the JSON export
+   * (`buildPlaylistExport` drops it).
+   */
+  durationMs?: number;
 };
 
 /** One page of a playlist's contents, as our API routes return it. */

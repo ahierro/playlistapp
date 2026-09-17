@@ -83,7 +83,7 @@ export function AppShell({ accounts, title, children }: Props) {
             })}
           </ul>
 
-          <MainNav services={connected} />
+          <MainNav services={connected} showTransfers={connected.length === 2} />
         </div>
       </header>
 

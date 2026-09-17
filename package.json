@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test src/lib/spotify-title-cleaner.test.mjs src/lib/youtube-track-parser.test.mjs"
+    "test": "node --test src/lib/spotify-title-cleaner.test.mjs src/lib/youtube-track-parser.test.mjs src/lib/youtube-match.test.mjs"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",

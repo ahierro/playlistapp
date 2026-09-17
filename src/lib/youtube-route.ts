@@ -68,3 +68,43 @@ export function readPageToken(request: Request): string | null {
   if (!/^[\x21-\x7E]{1,512}$/.test(token)) throw new InvalidPageTokenError();
   return token;
 }
+
+/**
+ * Guard for the routes that change the user's YouTube account. The session
+ * cookie is `SameSite=Lax`, which already keeps most cross-site POSTs out; this
+ * also refuses anything the browser marks as coming from another site.
+ */
+export function isSameOriginRequest(request: Request): boolean {
+  const fetchSite = request.headers.get("sec-fetch-site");
+  if (fetchSite && fetchSite !== "same-origin") return false;
+
+  const origin = request.headers.get("origin");
+  if (!origin) return fetchSite === "same-origin";
+
+  try {
+    return new URL(origin).host === request.headers.get("host");
+  } catch {
+    return false;
+  }
+}
+
+export function forbiddenOrigin() {
+  return NextResponse.json({ error: "Cross-site request refused" }, { status: 403 });
+}
+
+/** Reads a JSON body, answering 400 on anything that is not an object. */
+export async function readJsonObject(
+  request: Request,
+): Promise<Record<string, unknown> | null> {
+  const body: unknown = await request.json().catch(() => null);
+  return body && typeof body === "object" && !Array.isArray(body)
+    ? (body as Record<string, unknown>)
+    : null;
+}
+
+export function badRequest(message: string) {
+  return NextResponse.json({ error: message }, { status: 400 });
+}
+
+export const PLAYLIST_ID_PATTERN = /^[\w-]{1,100}$/;
+export const VIDEO_ID_PATTERN = /^[\w-]{11}$/;

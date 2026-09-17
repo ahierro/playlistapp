@@ -303,6 +303,7 @@ export type PlaylistTracksPage = {
 type RawMedia = {
   type?: string;
   name?: string | null;
+  duration_ms?: number | null;
   album?: { name?: string | null } | null;
   artists?: { name?: string | null }[] | null;
   show?: { name?: string | null; publisher?: string | null } | null;
@@ -342,6 +343,7 @@ function toExportedTrack(entry: RawPlaylistItem): ExportedTrack | null {
       .map((artist) => artist.name)
       .filter((name): name is string => Boolean(name)),
     album: media.album?.name ?? null,
+    durationMs: media.duration_ms ?? undefined,
   };
 }
 

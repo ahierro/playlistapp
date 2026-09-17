@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { FileJson, RefreshCw, Search } from "lucide-react";
+import { Copy, FileJson, RefreshCw, Search } from "lucide-react";
 
 import { CardGridSkeleton } from "@/components/card-grid-skeleton";
+import { CopyToYouTubeDialog } from "@/components/copy-to-youtube-dialog";
 import { PlaylistCard } from "@/components/playlist-card";
 import { ScopeError } from "@/components/scope-error";
 import { Button } from "@/components/ui/button";
@@ -27,11 +28,15 @@ type PlaylistSelection =
 export function PlaylistsList({
   userId,
   service,
+  youtubeUserId,
 }: {
   userId: string;
   service: MusicService;
+  /** Set on the Spotify page when YouTube Music is connected: enables copying. */
+  youtubeUserId?: string;
 }) {
   const config = SERVICES[service];
+  const [copyOpen, setCopyOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<PlaylistSelection>({ mode: "all" });
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(
@@ -57,11 +62,23 @@ export function PlaylistsList({
 
   // Playlists whose tracks the service will not expose are useless here (for
   // Spotify, anything the user neither owns nor collaborates on).
+  // YouTube mixes plain-video playlists in with the YouTube Music ones.
+  const [musicOnly, setMusicOnly] = useState(true);
+  const canFilterMusic = service === "youtube-music";
+
   const { isReadable } = config.playlists;
-  const playlists = useMemo(
+  const readable = useMemo(
     () => (items ?? []).filter((playlist) => isReadable(playlist, userId)),
     [items, userId, isReadable],
   );
+  const playlists = useMemo(
+    () =>
+      canFilterMusic && musicOnly
+        ? readable.filter((playlist) => playlist.isMusic !== false)
+        : readable,
+    [readable, canFilterMusic, musicOnly],
+  );
+  const hiddenCount = readable.length - playlists.length;
   const busy = isLoading || isRefreshing;
 
   const filtered = useMemo(() => {
@@ -159,6 +176,26 @@ export function PlaylistsList({
                 : "Loading your playlists…"}
             {items && query ? ` · ${filtered.length} match` : null}
           </p>
+          {canFilterMusic && items && (
+            <label className="mt-1 flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={musicOnly}
+                onChange={(event) => {
+                  setMusicOnly(event.target.checked);
+                  setSelection({ mode: "all" });
+                }}
+                disabled={exportRunning}
+                className="accent-primary"
+              />
+              Only music playlists
+              {musicOnly && hiddenCount > 0 && (
+                <span className="opacity-70">
+                  ({hiddenCount} video playlist{hiddenCount === 1 ? "" : "s"} hidden)
+                </span>
+              )}
+            </label>
+          )}
           {updatedLabel && (
             <p className="text-xs opacity-70">
               {isRefreshing ? "Refreshing…" : `Cached · updated ${updatedLabel}`}
@@ -227,14 +264,27 @@ export function PlaylistsList({
                   Cancel export
                 </Button>
               ) : (
-                <Button
-                  size="sm"
-                  onClick={exportSelected}
-                  disabled={selectedPlaylists.length === 0 || busy}
-                >
-                  <FileJson />
-                  Export selected
-                </Button>
+                <>
+                  {youtubeUserId && service === "spotify" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setCopyOpen(true)}
+                      disabled={selectedPlaylists.length === 0 || busy}
+                    >
+                      <Copy />
+                      Copy to YouTube Music
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    onClick={exportSelected}
+                    disabled={selectedPlaylists.length === 0 || busy}
+                  >
+                    <FileJson />
+                    Export selected
+                  </Button>
+                </>
               )}
             </div>
           </div>
@@ -261,6 +311,16 @@ export function PlaylistsList({
             </div>
           )}
         </div>
+      )}
+
+      {youtubeUserId && (
+        <CopyToYouTubeDialog
+          open={copyOpen}
+          onOpenChange={setCopyOpen}
+          playlists={selectedPlaylists}
+          spotifyUserId={userId}
+          youtubeUserId={youtubeUserId}
+        />
       )}
 
       {missingScope !== null && (

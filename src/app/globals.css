@@ -4,6 +4,8 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  /* Native controls (checkboxes, radios, scrollbars) render in dark too. */
+  color-scheme: dark;
   --radius: 0.625rem;
 
   /* Spotify-style dark palette (the app always renders in dark) */

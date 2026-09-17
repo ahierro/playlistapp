@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ListMusic, Users } from "lucide-react";
+import { ArrowLeftRight, ListMusic, Users } from "lucide-react";
 
 import type { MusicService } from "@/lib/music";
 import { SERVICES } from "@/lib/services";
@@ -13,8 +13,25 @@ const SECTIONS = [
   { path: "/playlists", label: "Playlists", icon: ListMusic },
 ] as const;
 
-/** One pill per connected service, each with its Artists / Playlists links. */
-export function MainNav({ services }: { services: MusicService[] }) {
+const linkClass = (active: boolean) =>
+  cn(
+    "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
+    active
+      ? "bg-primary text-primary-foreground"
+      : "text-muted-foreground hover:text-foreground",
+  );
+
+/**
+ * One pill per connected service, each with its Artists / Playlists links, plus
+ * the copies page when both services are connected.
+ */
+export function MainNav({
+  services,
+  showTransfers = false,
+}: {
+  services: MusicService[];
+  showTransfers?: boolean;
+}) {
   const pathname = usePathname();
 
   return (
@@ -45,12 +62,7 @@ export function MainNav({ services }: { services: MusicService[] }) {
                   <Link
                     href={href}
                     aria-current={active ? "page" : undefined}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
-                      active
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
+                    className={linkClass(active)}
                   >
                     <Icon className="size-4" />
                     {sectionLabel}
@@ -61,6 +73,19 @@ export function MainNav({ services }: { services: MusicService[] }) {
           </ul>
         );
       })}
+
+      {showTransfers && (
+        <div className="rounded-full bg-secondary p-1">
+          <Link
+            href="/transfers"
+            aria-current={pathname === "/transfers" ? "page" : undefined}
+            className={linkClass(pathname === "/transfers")}
+          >
+            <ArrowLeftRight className="size-4" />
+            Copies
+          </Link>
+        </div>
+      )}
     </nav>
   );
 }

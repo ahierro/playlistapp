@@ -12,7 +12,7 @@
 const PREFIX = "playlistapp";
 
 /** Bump this when the cached shape changes, so old entries are ignored instead of crashing the UI. */
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 4;
 
 export type CacheEntry<T> = {
   version: number;

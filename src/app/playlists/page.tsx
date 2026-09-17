@@ -18,7 +18,11 @@ export default async function PlaylistsPage() {
 
   return (
     <AppShell accounts={accounts} title="Your Spotify playlists">
-      <PlaylistsList userId={account.id} service="spotify" />
+      <PlaylistsList
+        userId={account.id}
+        service="spotify"
+        youtubeUserId={accounts["youtube-music"]?.id}
+      />
     </AppShell>
   );
 }

@@ -119,6 +119,45 @@ reads it through the official **YouTube Data API v3** after a Google sign-in.
   look like artists**: `Name - Topic` and `NameVEVO` channels, or channels YouTube tagged with a
   music topic. It is a heuristic: a music reviewer or a label can slip in, and duplicates such as
   `Adele` / `Adele - Topic` are merged.
+  `subscriptions.list` stops paginating after **~1,000 items** per walk, whatever the account
+  really has, so the app walks the list three times (`relevance`, `alphabetical`, `unread`) and
+  merges the results. That reaches far more of a big subscription list, but beyond ~1,000
+  subscriptions it is still not guaranteed to be complete.
+
+### Copy Spotify playlists to YouTube Music
+
+With both accounts connected, the Spotify **Playlists** page gets a **Copy to YouTube Music**
+button for the selected playlists. The destination is a new playlist per Spotify playlist
+(same name, your choice of privacy) or one existing YouTube Music playlist. Progress lives on
+the **Copies** page (`/transfers`).
+
+For each song the app searches YouTube for `artist + title` in the Music category, then scores
+the results (`src/lib/youtube-match.ts`): title and artist match, `- Topic` / VEVO channels,
+duration within a few seconds of Spotify's, and a penalty for live, cover, karaoke and similar
+versions the track is not. Weak matches are added but flagged; nothing plausible means
+"not found". On the Copies page you can confirm a doubtful match, remove it, or paste the
+right YouTube / YouTube Music link.
+
+**The quota is the real limit.** A song costs about 151 units (search 100 + durations 1 +
+insert 50) out of 10,000 a day, so **about 65 songs a day**. The copy is built for that
+(`src/lib/transfer-store.ts`):
+
+- The queue and every finished song are saved in `localStorage` right away. When YouTube
+  answers `quotaExceeded`, the copy pauses and the Copies page shows when the quota resets
+  (midnight Pacific time). **Continue** picks up at the first pending song.
+- The playlist id is saved as soon as it is created, so a resumed copy never creates it twice.
+- The target playlist's current videos are read at the start of every run: songs already there
+  are marked "already in the playlist" instead of being added again.
+- Search results (including "not found", for 30 days) are cached per YouTube account, so a
+  song is never paid for twice, even across different copies. **Retry unmatched** ignores
+  the cache.
+- The copy runs in the browser tab. Moving around the app is fine; closing or reloading the
+  tab pauses it.
+
+Limits: podcast episodes are skipped, "Liked videos" cannot be a destination, and only
+Spotify playlists you own or collaborate on can be read. For more than ~65 songs a day, ask
+Google for more quota (Google Cloud Console → YouTube Data API v3 → Quotas); it needs a review.
+
 
 ### 2. Environment variables
 
@@ -151,18 +190,21 @@ src/
 │   ├── api/auth/[...nextauth]/route.ts    # Spotify login/callback/logout
 │   ├── api/youtube-auth/[...nextauth]/route.ts  # Google login/callback/logout
 │   ├── api/spotify/...                    # Spotify pagination routes (the token never leaves the server)
-│   ├── api/youtube/...                    # YouTube Data API routes: artists, playlists, playlist items
+│   ├── api/youtube/...                    # YouTube Data API routes: artists, playlists, items, match, writes
 │   ├── page.tsx                           # sign-in screen, or the sections of every connected service
 │   ├── artists/, playlists/               # Spotify pages
-│   └── youtube-music/artists/, playlists/ # YouTube Music pages
-├── components/                            # service-agnostic cards and lists (take a `service` prop)
+│   ├── youtube-music/artists/, playlists/ # YouTube Music pages
+│   └── transfers/                         # Spotify -> YouTube Music copies
+├── components/                            # service-agnostic cards and lists, copy dialog, copies view
 └── lib/
     ├── music.ts                           # provider-neutral types (ArtistSummary, PlaylistSummary, ExportedTrack)
     ├── services.ts                        # per-service config: fetchers, cache keys, labels
     ├── accounts.ts                        # reads both sessions
     ├── spotify.ts / spotify-client.ts     # Spotify Web API (server) / fetchers (browser)
     ├── youtube.ts / youtube-client.ts     # YouTube Data API (server) / fetchers (browser)
-    └── youtube-track-parser.ts            # video -> song / artists / album
+    ├── youtube-track-parser.ts            # video -> song / artists / album
+    ├── youtube-match.ts                   # scores search results against a Spotify track
+    └── transfer-store.ts                  # resumable Spotify -> YouTube Music copy queue
 ```
 
 ### Authentication
@@ -220,7 +262,7 @@ npm run dev     # dev server
 npm run build   # production build
 npm run start   # serve the build
 npm run lint    # eslint
-npm test        # title cleaner + YouTube track parser tests
+npm test        # title cleaner, YouTube track parser and match scoring tests
 ```
 
 ## Next steps

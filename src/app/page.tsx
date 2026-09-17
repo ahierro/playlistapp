@@ -1,4 +1,4 @@
-import { ListMusic, Music, Users } from "lucide-react";
+import { ArrowLeftRight, ListMusic, Music, Users } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
 import { SectionLink } from "@/components/section-link";
@@ -101,6 +101,21 @@ export default async function HomePage() {
             </section>
           );
         })}
+
+        {connected.length === 2 && (
+          <section className="flex flex-col gap-3">
+            <h2 className="flex items-center gap-2 text-sm font-semibold tracking-wide text-muted-foreground uppercase">
+              <ArrowLeftRight className="size-4" />
+              Copies
+            </h2>
+            <SectionLink
+              href="/transfers"
+              icon={ArrowLeftRight}
+              label="Spotify → YouTube Music"
+              description="Progress and review of your playlist copies."
+            />
+          </section>
+        )}
 
         {missing.map((service) => (
           <section
