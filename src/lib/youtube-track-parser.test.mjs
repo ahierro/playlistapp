@@ -127,6 +127,11 @@ for (const input of meaningful) {
 
 test("cleans channel names", () => {
   assert.equal(cleanChannelName("Adele - Topic"), "Adele");
+  assert.equal(cleanChannelName("Adele Topic"), "Adele");
+  assert.equal(cleanChannelName("Adele – Topic"), "Adele");
+  assert.equal(cleanChannelName("Adele -Topic"), "Adele");
+  assert.equal(cleanChannelName("Topic"), "Topic");
+  assert.equal(cleanChannelName("Hot Topical"), "Hot Topical");
   assert.equal(cleanChannelName("TaylorSwiftVEVO"), "Taylor Swift");
   assert.equal(cleanChannelName("ACDCVEVO"), "ACDC");
   assert.equal(cleanChannelName("Los Fabulosos Cadillacs"), "Los Fabulosos Cadillacs");

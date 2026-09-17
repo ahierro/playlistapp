@@ -3,10 +3,11 @@
  * routes and map the results into the provider-neutral shapes in `@/lib/music`.
  */
 
-import { sendJson, walkPages } from "@/lib/api-client";
+import { getJson, MAX_PAGES, sendJson, walkPages } from "@/lib/api-client";
 import {
   pickImage,
   type ArtistSummary,
+  type DownloadProgress,
   type ExportedTrack,
   type PlaylistSummary,
   type TracksPage,
@@ -23,7 +24,7 @@ const SERVICE = "YouTube Music";
 const MUSIC_THRESHOLD = 0.5;
 const MUSIC_BASE = "https://music.youtube.com";
 
-/** Must match `SUBSCRIPTION_ORDERS` in `@/lib/youtube` (server-only module). */
+/** Must match `SUBSCRIPTION_ORDERS` in `@/lib/youtube` (a server-only module). */
 const ORDERS = ["relevance", "alphabetical", "unread"] as const;
 
 function withToken(path: string, token: string | null) {
@@ -62,42 +63,67 @@ function toPlaylistSummary(playlist: YouTubePlaylist): PlaylistSummary {
 }
 
 /**
- * Every subscribed artist channel. YouTube stops paginating subscriptions after
- * ~1,000 items, so the walk is repeated for each order and the results merged
- * (see `SUBSCRIPTION_ORDERS`). Name dedupe happens in `sortYouTubeArtists`.
+ * EVERY subscribed artist channel, walking the pages from the browser so the
+ * download can report progress.
+ *
+ * `subscriptions.list` stops paginating after ~1,000 items per pass, so the
+ * three orders are walked and merged; progress counts the subscriptions read
+ * across all three passes.
  */
-export async function fetchAllYouTubeArtists(
-  signal?: AbortSignal,
-): Promise<ArtistSummary[]> {
+export async function fetchAllYouTubeArtists({
+  signal,
+  onProgress,
+}: {
+  signal?: AbortSignal;
+  onProgress?: (progress: DownloadProgress) => void;
+} = {}): Promise<ArtistSummary[]> {
   const byId = new Map<string, YouTubeArtist>();
-  const scanned: string[] = [];
+  let scanned = 0;
+  let total: number | null = null;
 
-  for (const order of ORDERS) {
-    let count = 0;
-    let total: number | null = null;
+  for (const [pass, order] of ORDERS.entries()) {
+    let pageToken: string | null = null;
 
-    const artists = await walkPages<YouTubeArtistsPage, YouTubeArtist>({
-      service: SERVICE,
-      signal,
-      pageUrl: (token) =>
-        withToken(`/api/youtube/artists?order=${order}`, token),
-      getItems: (page) => {
-        count += page.scanned;
-        total = page.totalSubscriptions ?? total;
-        return page.items;
-      },
-      getNext: (page) => page.nextPageToken,
-    });
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const data: YouTubeArtistsPage = await getJson<YouTubeArtistsPage>(
+        withToken(`/api/youtube/artists?order=${order}`, pageToken),
+        { signal, service: SERVICE },
+      );
 
-    for (const artist of artists) byId.set(artist.id, artist);
-    scanned.push(`${order}: ${count}/${total ?? "?"}`);
+      for (const artist of data.items) byId.set(artist.id, artist);
+      scanned += data.scanned;
+      total = data.totalSubscriptions ?? total;
+
+      onProgress?.({
+        done: scanned,
+        // Every pass walks the whole subscription list again.
+        total: total === null ? null : total * ORDERS.length,
+        found: byId.size,
+        label: `Pass ${pass + 1} of ${ORDERS.length} (${order})`,
+      });
+
+      if (!data.nextPageToken || data.nextPageToken === pageToken) break;
+      pageToken = data.nextPageToken;
+    }
   }
 
-  console.info(
-    `[youtube] ${byId.size} artist channels. Subscriptions scanned per order: ${scanned.join(", ")}.`,
-  );
-
   return [...byId.values()].map(toArtistSummary);
+}
+
+/**
+ * Artist channels among one page of 50 subscriptions: usually fewer than 50,
+ * sometimes none. The pager buffers these into fixed-size batches. The .txt
+ * export walks every page on the server instead.
+ */
+export async function fetchYouTubeArtistsPage(
+  cursor: string | null,
+  { signal }: { limit: number; signal?: AbortSignal },
+): Promise<{ items: ArtistSummary[]; next: string | null }> {
+  const page = await getJson<YouTubeArtistsPage>(
+    withToken("/api/youtube/artists?order=relevance", cursor),
+    { signal, service: SERVICE },
+  );
+  return { items: page.items.map(toArtistSummary), next: page.nextPageToken };
 }
 
 /** Every playlist the user owns, plus "Liked videos". */
@@ -233,4 +259,21 @@ export function youtubeMusicPlaylistUrl(playlistId: string) {
 
 export function youtubeMusicWatchUrl(videoId: string) {
   return `${MUSIC_BASE}/watch?v=${encodeURIComponent(videoId)}`;
+}
+
+/** Subscribes to an artist's channel on YouTube by name (150 quota units). */
+export async function subscribeToArtistOnYouTube(
+  name: string,
+): Promise<{ name: string; url: string; imageUrl: string | null }> {
+  const result = await sendJson<{
+    name: string;
+    url: string;
+    imageUrl: string | null;
+  }>("/api/youtube/subscribe", {
+    method: "POST",
+    body: { name },
+    service: SERVICE,
+  });
+  if (!result) throw new Error("YouTube did not confirm the subscription");
+  return result;
 }

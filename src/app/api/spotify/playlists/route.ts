@@ -1,7 +1,19 @@
 import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
-import { getUserPlaylists, SpotifyApiError, SpotifyAuthError } from "@/lib/spotify";
+import {
+  createSpotifyPlaylist,
+  getUserPlaylists,
+  SpotifyApiError,
+  SpotifyAuthError,
+} from "@/lib/spotify";
+import { withSpotifySession } from "@/lib/spotify-route";
+import {
+  badRequest,
+  forbiddenOrigin,
+  isSameOriginRequest,
+  readJsonObject,
+} from "@/lib/youtube-route";
 
 export async function GET(request: Request) {
   const session = await auth();
@@ -43,4 +55,30 @@ export async function GET(request: Request) {
       { status: 502 },
     );
   }
+}
+
+/**
+ * Creates a playlist. Body: { title, description?, privacyStatus }.
+ * Spotify has no "unlisted": anything but "public" is private.
+ */
+export async function POST(request: Request) {
+  if (!isSameOriginRequest(request)) return forbiddenOrigin();
+
+  const body = await readJsonObject(request);
+  const title = typeof body?.title === "string" ? body.title.trim() : "";
+  const description =
+    typeof body?.description === "string" ? body.description : undefined;
+  if (!title) return badRequest("A title is required");
+
+  return withSpotifySession("api/spotify/playlists POST", async (accessToken) => {
+    const playlist = await createSpotifyPlaylist(accessToken, {
+      name: title,
+      description,
+      isPublic: body?.privacyStatus === "public",
+    });
+    return NextResponse.json(
+      { id: playlist.id, title: playlist.name },
+      { status: 201 },
+    );
+  });
 }

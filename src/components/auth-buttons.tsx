@@ -1,4 +1,4 @@
-import { LogIn, LogOut } from "lucide-react";
+import { LogOut } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -8,6 +8,7 @@ import {
   signOutOfYouTubeMusic,
 } from "@/lib/auth-actions";
 import { SERVICE_LABELS, type MusicService } from "@/lib/music";
+import { SERVICES } from "@/lib/services";
 
 const SIGN_IN = {
   spotify: signInWithSpotify,
@@ -32,10 +33,12 @@ export function SignInButton({
   variant?: "default" | "outline";
   label?: string;
 }) {
+  const Logo = SERVICES[service].icon;
+
   return (
-    <form action={SIGN_IN[service]}>
+    <form action={SIGN_IN[service]} className={SERVICES[service].themeClass}>
       <Button type="submit" size={size} variant={variant} className={className}>
-        <LogIn />
+        <Logo className={size === "lg" ? "size-5" : "size-4"} />
         {label ?? `Sign in with ${SERVICE_LABELS[service]}`}
       </Button>
     </form>

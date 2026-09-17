@@ -37,13 +37,16 @@ export function MainNav({
   return (
     <nav aria-label="Sections" className="flex flex-wrap items-center gap-2">
       {services.map((service) => {
-        const { basePath, label, icon: ServiceIcon } = SERVICES[service];
+        const { basePath, label, icon: ServiceIcon, themeClass } = SERVICES[service];
 
         return (
           <ul
             key={service}
             aria-label={label}
-            className="flex items-center gap-1 rounded-full bg-secondary p-1"
+            className={cn(
+              "flex items-center gap-1 rounded-full bg-secondary p-1",
+              themeClass,
+            )}
           >
             <li
               className="flex items-center pr-1 pl-2 text-muted-foreground"

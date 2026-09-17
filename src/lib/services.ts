@@ -3,23 +3,28 @@
  * place. Client-safe: it only references browser fetchers and pure helpers.
  */
 
-import { Disc3, type LucideIcon, Music } from "lucide-react";
+import type { ComponentType } from "react";
+
+import { SpotifyLogo, YouTubeMusicLogo } from "@/components/service-logo";
 
 import {
   sortByName,
   type ArtistSummary,
+  type DownloadProgress,
   type ExportedTrack,
   type MusicService,
   type PlaylistSummary,
 } from "@/lib/music";
 import {
   fetchAllFollowedArtists,
+  fetchFollowedArtistsPage,
   fetchAllPlaylistTracks,
   fetchAllUserPlaylists,
 } from "@/lib/spotify-client";
 import { stripSpotifyEditionNoise } from "@/lib/spotify-title-cleaner";
 import {
   fetchAllYouTubeArtists,
+  fetchYouTubeArtistsPage,
   fetchAllYouTubePlaylists,
   fetchAllYouTubePlaylistTracks,
 } from "@/lib/youtube-client";
@@ -27,14 +32,34 @@ import {
 export type ServiceConfig = {
   id: MusicService;
   label: string;
-  icon: LucideIcon;
+  /** Official logo; takes a `className` like a lucide icon. */
+  icon: ComponentType<{ className?: string }>;
+  /** Class that switches the accent color to the brand's (see globals.css). */
+  themeClass: string;
   /** Route prefix of the service's pages. */
   basePath: string;
   artists: {
-    cacheKey: string;
-    fetchAll: (signal?: AbortSignal) => Promise<ArtistSummary[]>;
+    /**
+     * One remote page, for the infinite scroll. It may hold fewer items than
+     * `limit` (YouTube filters subscriptions down to artists).
+     */
+    fetchPage: (
+      cursor: string | null,
+      options: { limit: number; signal?: AbortSignal },
+    ) => Promise<{ items: ArtistSummary[]; next: string | null }>;
+    /** Server route that walks EVERY page and answers a .txt. */
+    /**
+     * The complete list, walking every page and reporting progress. Only used
+     * by the download button.
+     */
+    fetchAll: (options?: {
+      signal?: AbortSignal;
+      onProgress?: (progress: DownloadProgress) => void;
+    }) => Promise<ArtistSummary[]>;
+    /** localStorage cache name for the complete list. */
+    fullCacheKey: string;
+    /** Sorting for the complete list (the .txt is alphabetical). */
     sort: (items: ArtistSummary[]) => ArtistSummary[];
-    exportUrl: string;
     exportFilePrefix: string;
     nounPlural: string;
     emptyMessage: string;
@@ -86,14 +111,15 @@ export const SERVICES: Record<MusicService, ServiceConfig> = {
   spotify: {
     id: "spotify",
     label: "Spotify",
-    icon: Disc3,
+    icon: SpotifyLogo,
+    themeClass: "",
     basePath: "",
     artists: {
-      cacheKey: "followed-artists",
+      fetchPage: fetchFollowedArtistsPage,
       fetchAll: fetchAllFollowedArtists,
+      fullCacheKey: "followed-artists-full",
       sort: sortByName,
-      exportUrl: "/api/spotify/following/export",
-      exportFilePrefix: "followed-artists",
+      exportFilePrefix: "spotify-followed-artists",
       nounPlural: "artists",
       emptyMessage: "You do not follow any artists yet.",
     },
@@ -112,14 +138,15 @@ export const SERVICES: Record<MusicService, ServiceConfig> = {
   "youtube-music": {
     id: "youtube-music",
     label: "YouTube Music",
-    icon: Music,
+    icon: YouTubeMusicLogo,
+    themeClass: "theme-youtube",
     basePath: "/youtube-music",
     artists: {
-      cacheKey: "yt-artists",
+      fetchPage: fetchYouTubeArtistsPage,
       fetchAll: fetchAllYouTubeArtists,
+      fullCacheKey: "yt-artists-full",
       sort: sortYouTubeArtists,
-      exportUrl: "/api/youtube/artists/export",
-      exportFilePrefix: "youtube-music-artists",
+      exportFilePrefix: "youtube-music-followed-artists",
       nounPlural: "artists",
       emptyMessage:
         "None of your YouTube subscriptions look like an artist channel.",

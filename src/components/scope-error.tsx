@@ -5,7 +5,7 @@ import { SERVICE_LABELS, type MusicService } from "@/lib/music";
 
 const EXPLANATIONS: Record<MusicService, string> = {
   spotify:
-    "Your session was created before the app requested access to playlists. Sign out and sign back in to authorize the new permission.",
+    "Your session was created before the app requested a permission it now needs (reading or creating playlists). Sign out of Spotify and sign back in to authorize it.",
   "youtube-music":
     "Google did not grant access to your YouTube account. Sign out and sign back in, and make sure the YouTube permission is ticked on the consent screen.",
 };

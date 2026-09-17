@@ -183,3 +183,117 @@ export function parseVideoId(input: string): string | null {
   }
   return null;
 }
+
+/* ------------------------------------------------------------------ */
+/* Artist channels                                                     */
+/* ------------------------------------------------------------------ */
+
+/** YouTube's "Music" video category. */
+export const MUSIC_CATEGORY_ID = "10";
+
+/** Recent uploads looked at per channel. */
+export const ARTIST_SAMPLE_SIZE = 10;
+/** Share of Music-category uploads from which a channel counts as an artist. */
+export const ARTIST_MUSIC_SHARE = 0.6;
+/** Below this many uploads the sample says nothing. */
+const MIN_SAMPLE = 3;
+/**
+ * Longer uploads are not songs (vlogs, podcasts, reviews, live streams), even
+ * when filed under Music. Judged per video: one concert or full album does not
+ * disqualify an artist, it just does not count as music.
+ */
+export const MAX_SONG_SECONDS = 10 * 60;
+
+export type UploadSample = {
+  categoryId: string;
+  /** null when YouTube did not report it. */
+  durationSeconds: number | null;
+};
+
+/** A Music-category upload no longer than a song can be. */
+export function isSongLike(upload: UploadSample): boolean {
+  return (
+    upload.categoryId === MUSIC_CATEGORY_ID &&
+    (upload.durationSeconds === null || upload.durationSeconds <= MAX_SONG_SECONDS)
+  );
+}
+
+/**
+ * Decides whether a subscribed channel is an artist.
+ *
+ * - "Name - Topic" and "NameVEVO" channels always are.
+ * - Otherwise YouTube must have tagged the channel with a music topic AND most
+ *   of its recent uploads must be song-like: in the Music category and no longer
+ *   than 10 minutes. The topic alone lets in reviewers, reaction and gear
+ *   channels, which talk about music but upload long "Entertainment" or
+ *   "People & Blogs" videos.
+ * - A channel with too few uploads to judge is kept only when YouTube tagged it
+ *   with a specific genre, not just the generic "Music".
+ *
+ * `uploads` is null when the uploads were not looked at.
+ */
+export function isArtistChannel(
+  title: string,
+  topics: string[],
+  uploads: UploadSample[] | null = null,
+): boolean {
+  if (/\s-\s+topic$/iu.test(title) || /vevo$/iu.test(title)) return true;
+
+  const musicTopics = topics.filter((topic) => MUSIC_TOPIC_NAMES.has(topic));
+  if (musicTopics.length === 0) return false;
+  if (uploads === null) return true;
+
+  if (uploads.length < MIN_SAMPLE) {
+    return musicTopics.some((topic) => topic !== "Music");
+  }
+
+  const songs = uploads.filter(isSongLike).length;
+  return songs / uploads.length >= ARTIST_MUSIC_SHARE;
+}
+
+/** Whether the uploads have to be checked at all (saves quota on obvious cases). */
+export function needsUploadCheck(title: string, topics: string[]): boolean {
+  if (/\s-\s+topic$/iu.test(title) || /vevo$/iu.test(title)) return false;
+  return topics.some((topic) => MUSIC_TOPIC_NAMES.has(topic));
+}
+
+/**
+ * Freebase topics YouTube assigns to music channels, as the last part of their
+ * Wikipedia URLs. https://developers.google.com/youtube/v3/docs/channels#topicDetails
+ */
+export const MUSIC_TOPIC_NAMES = new Set([
+  "Music",
+  "Christian_music",
+  "Classical_music",
+  "Country_music",
+  "Electronic_music",
+  "Hip_hop_music",
+  "Independent_music",
+  "Jazz",
+  "Music_of_Asia",
+  "Music_of_Latin_America",
+  "Pop_music",
+  "Reggae",
+  "Rhythm_and_blues",
+  "Rock_music",
+  "Soul_music",
+]);
+
+/** Track id from an open.spotify.com link, a spotify:track: URI or a bare id. */
+export function parseSpotifyTrackId(input: string): string | null {
+  const value = input.trim();
+  if (/^[A-Za-z0-9]{22}$/.test(value)) return value;
+
+  const uri = value.match(/^spotify:track:([A-Za-z0-9]{22})$/);
+  if (uri) return uri[1];
+
+  try {
+    const url = new URL(value);
+    if (url.hostname !== "open.spotify.com") return null;
+    // Also "/intl-es/track/<id>".
+    const match = url.pathname.match(/\/track\/([A-Za-z0-9]{22})(?:\/|$)/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}

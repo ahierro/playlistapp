@@ -20,7 +20,11 @@ export default async function ArtistsPage() {
   return (
     <AppShell accounts={accounts} title="Artists you follow on Spotify">
       {/* Scoping the cache by user id keeps two accounts on the same browser apart. */}
-      <FollowedArtists userId={account.id} service="spotify" />
+      <FollowedArtists
+        userId={account.id}
+        service="spotify"
+        otherUserId={accounts["youtube-music"]?.id}
+      />
     </AppShell>
   );
 }

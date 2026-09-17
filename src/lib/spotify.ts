@@ -1,4 +1,5 @@
 import type { ExportedTrack } from "@/lib/music";
+import { pickBestMatch, type VideoCandidate } from "@/lib/youtube-match";
 
 const API_BASE = "https://api.spotify.com/v1";
 
@@ -13,11 +14,14 @@ export class SpotifyAuthError extends Error {
 /** Any other error returned by the Web API. */
 export class SpotifyApiError extends Error {
   readonly status: number;
+  /** Seconds to wait, on a 429. */
+  readonly retryAfter?: number;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, retryAfter?: number) {
     super(message);
     this.name = "SpotifyApiError";
     this.status = status;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -73,6 +77,10 @@ async function spotifyFetch(
     headers: {
       ...init?.headers,
       Authorization: `Bearer ${accessToken}`,
+      // Spotify serves some list endpoints (notably /me/playlists, whose track
+      // counts lag behind) from a cache. Ask for a fresh copy.
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
     },
     cache: "no-store",
   });
@@ -89,10 +97,12 @@ async function spotifyFetch(
   }
 
   if (response.status === 429) {
-    const retryAfter = response.headers.get("Retry-After") ?? "a few";
+    const seconds = Number(response.headers.get("Retry-After"));
+    const retryAfter = Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
     throw new SpotifyApiError(
-      `You hit the Spotify rate limit. Retry in ${retryAfter} seconds.`,
+      `You hit the Spotify rate limit. Retry in ${retryAfter ?? "a few"} seconds.`,
       429,
+      retryAfter,
     );
   }
 
@@ -413,4 +423,256 @@ export function sortPlaylistsByName(
   playlists: SpotifyPlaylist[],
 ): SpotifyPlaylist[] {
   return [...playlists].sort((a, b) => nameCollator.compare(a.name, b.name));
+}
+
+/* ------------------------------------------------------------------ */
+/* Writing: used by the YouTube Music -> Spotify copy                  */
+/* Needs the playlist-modify-public / playlist-modify-private scopes.  */
+/* ------------------------------------------------------------------ */
+
+export async function createSpotifyPlaylist(
+  accessToken: string,
+  {
+    name,
+    description,
+    isPublic,
+  }: { name: string; description?: string; isPublic: boolean },
+): Promise<{ id: string; name: string }> {
+  const response = await spotifyFetch("/me/playlists", accessToken, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: name.slice(0, 100),
+      // Spotify rejects line breaks in descriptions.
+      description: (description ?? "").replace(/[\r\n]+/g, " ").slice(0, 300),
+      public: isPublic,
+    }),
+  });
+  const data = (await response.json()) as { id: string; name?: string };
+  return { id: data.id, name: data.name ?? name };
+}
+
+/** Appends up to 100 tracks. */
+export async function addTracksToSpotifyPlaylist(
+  accessToken: string,
+  playlistId: string,
+  uris: string[],
+): Promise<void> {
+  await spotifyFetch(
+    `/playlists/${encodeURIComponent(playlistId)}/items`,
+    accessToken,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uris: uris.slice(0, 100) }),
+    },
+  );
+}
+
+/** Removes every occurrence of up to 100 tracks. */
+export async function removeTracksFromSpotifyPlaylist(
+  accessToken: string,
+  playlistId: string,
+  uris: string[],
+): Promise<void> {
+  await spotifyFetch(
+    `/playlists/${encodeURIComponent(playlistId)}/items`,
+    accessToken,
+    {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items: uris.slice(0, 100).map((uri) => ({ uri })) }),
+    },
+  );
+}
+
+/** Track URIs already in a playlist, one page at a time. */
+export async function getSpotifyPlaylistUris(
+  accessToken: string,
+  playlistId: string,
+  { offset = 0 }: { offset?: number } = {},
+): Promise<{ uris: string[]; nextOffset: number | null }> {
+  const params = new URLSearchParams({
+    limit: "50",
+    offset: String(Math.max(offset, 0)),
+  });
+  const response = await spotifyFetch(
+    `/playlists/${encodeURIComponent(playlistId)}/items?${params}`,
+    accessToken,
+  );
+  const data = (await response.json()) as {
+    items: { item?: { uri?: string } | null; track?: { uri?: string } | null }[];
+    next: string | null;
+    offset: number;
+  };
+
+  return {
+    uris: data.items.flatMap((entry) => {
+      const uri = (entry.item ?? entry.track)?.uri;
+      return uri ? [uri] : [];
+    }),
+    nextOffset: data.next ? data.offset + data.items.length : null,
+  };
+}
+
+export type SpotifyTrackMatch = {
+  uri: string;
+  name: string;
+  artists: string[];
+  confidence: "high" | "low";
+};
+
+type RawSearchTrack = {
+  uri: string;
+  name: string;
+  duration_ms?: number;
+  artists?: { name?: string }[];
+};
+
+async function searchTracks(accessToken: string, q: string) {
+  const params = new URLSearchParams({ q, type: "track", limit: "10" });
+  const response = await spotifyFetch(`/search?${params}`, accessToken);
+  const data = (await response.json()) as {
+    tracks?: { items?: (RawSearchTrack | null)[] };
+  };
+  return (data.tracks?.items ?? []).filter(
+    (track): track is RawSearchTrack => Boolean(track?.uri),
+  );
+}
+
+/**
+ * Finds the Spotify track for a song read from YouTube. Tries a fielded query
+ * first (precise), then a plain one (tolerant of spelling). The results are
+ * scored with the same rules as the opposite direction: title, artist,
+ * duration, and a penalty for live / cover / remix versions.
+ */
+export async function findTrackOnSpotify(
+  accessToken: string,
+  track: { name: string; artists: string[]; durationMs?: number | null },
+): Promise<SpotifyTrackMatch | null> {
+  const artist = track.artists[0] ?? "";
+  const clean = (value: string) => value.replace(/"/g, "");
+  const queries = [
+    artist
+      ? `track:"${clean(track.name)}" artist:"${clean(artist)}"`
+      : `track:"${clean(track.name)}"`,
+    `${artist} ${track.name}`.trim(),
+  ];
+
+  for (const q of queries) {
+    const results = await searchTracks(accessToken, q);
+    const byUri = new Map(results.map((result) => [result.uri, result]));
+
+    const candidates: VideoCandidate[] = results.map((result) => ({
+      videoId: result.uri,
+      title: result.name,
+      // The scorer looks for the artist in the "channel": give it every artist.
+      channelTitle: (result.artists ?? []).map((a) => a.name ?? "").join(" "),
+      durationSeconds:
+        typeof result.duration_ms === "number" ? result.duration_ms / 1000 : null,
+    }));
+
+    const best = pickBestMatch(
+      { name: track.name, artists: track.artists, durationMs: track.durationMs },
+      candidates,
+    );
+    if (best) {
+      const chosen = byUri.get(best.videoId)!;
+      return {
+        uri: chosen.uri,
+        name: chosen.name,
+        artists: (chosen.artists ?? []).flatMap((a) => (a.name ? [a.name] : [])),
+        confidence: best.confidence,
+      };
+    }
+  }
+
+  return null;
+}
+
+/** One track by id, for a link the user pasted during review. */
+export async function getSpotifyTrack(
+  accessToken: string,
+  id: string,
+): Promise<{ uri: string; name: string; artists: string[] }> {
+  const response = await spotifyFetch(
+    `/tracks/${encodeURIComponent(id)}`,
+    accessToken,
+  );
+  const data = (await response.json()) as RawSearchTrack;
+  return {
+    uri: data.uri,
+    name: data.name,
+    artists: (data.artists ?? []).flatMap((a) => (a.name ? [a.name] : [])),
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Following artists (the "only on YouTube Music" list)                */
+/* ------------------------------------------------------------------ */
+
+export type SpotifyArtistHit = {
+  uri: string;
+  id: string;
+  name: string;
+  url: string;
+  imageUrl: string | null;
+};
+
+/** Artists matching a name. Max 10 results since February 2026. */
+export async function searchArtists(
+  accessToken: string,
+  query: string,
+): Promise<SpotifyArtistHit[]> {
+  const params = new URLSearchParams({ q: query, type: "artist", limit: "10" });
+  const response = await spotifyFetch(`/search?${params}`, accessToken);
+  const data = (await response.json()) as {
+    artists?: { items?: (SpotifyArtist & { uri: string })[] };
+  };
+
+  return (data.artists?.items ?? []).map((artist) => ({
+    uri: artist.uri,
+    id: artist.id,
+    name: artist.name,
+    url: artist.external_urls.spotify,
+    imageUrl: pickArtistImage(artist, 160)?.url ?? null,
+  }));
+}
+
+/**
+ * Follows artists. February 2026 replaced `PUT /me/following` with the unified
+ * library endpoint, which takes URIs instead of ids.
+ *
+ * The migration guide shows the URIs in a JSON body, but the API has answered
+ * `400 Missing required field: uris` to that, so if the body form is rejected
+ * the same call is retried with the URIs in the query string (the shape the old
+ * follow endpoint used). Whichever works is logged once.
+ */
+export async function followSpotifyArtists(
+  accessToken: string,
+  uris: string[],
+): Promise<void> {
+  const wanted = uris.slice(0, 50);
+
+  try {
+    await spotifyFetch("/me/library", accessToken, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uris: wanted }),
+    });
+    return;
+  } catch (error) {
+    const missingField =
+      error instanceof SpotifyApiError &&
+      error.status === 400 &&
+      /uris/i.test(error.message);
+    if (!missingField) throw error;
+
+    console.info(
+      "[spotify] PUT /me/library rejected the JSON body; retrying with the URIs in the query string.",
+    );
+  }
+
+  const params = new URLSearchParams({ uris: wanted.join(",") });
+  await spotifyFetch(`/me/library?${params}`, accessToken, { method: "PUT" });
 }

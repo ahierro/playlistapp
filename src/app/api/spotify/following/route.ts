@@ -17,10 +17,16 @@ export async function GET(request: Request) {
     );
   }
 
-  const after = new URL(request.url).searchParams.get("after");
+  const params = new URL(request.url).searchParams;
+  const after = params.get("after");
+  const limit = Number(params.get("limit") ?? 50);
+
+  if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+    return NextResponse.json({ error: "Invalid limit" }, { status: 400 });
+  }
 
   try {
-    const page = await getFollowedArtists(session.accessToken, { after });
+    const page = await getFollowedArtists(session.accessToken, { after, limit });
     return NextResponse.json(page);
   } catch (error) {
     if (error instanceof SpotifyAuthError) {

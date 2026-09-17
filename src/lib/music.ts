@@ -56,6 +56,18 @@ export type ExportedTrack = {
   durationMs?: number;
 };
 
+/** How a long download is going, for the progress bar. */
+export type DownloadProgress = {
+  /** Items read so far (artists for Spotify, subscriptions for YouTube). */
+  done: number;
+  /** Total the service reports, or null while unknown. */
+  total: number | null;
+  /** Artists kept so far. */
+  found: number;
+  /** Extra context, e.g. which pass is running. */
+  label?: string;
+};
+
 /** One page of a playlist's contents, as our API routes return it. */
 export type TracksPage = {
   items: ExportedTrack[];

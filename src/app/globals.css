@@ -30,6 +30,18 @@
   --ring: oklch(0.75 0.19 148 / 60%);
 }
 
+/*
+ * YouTube-related areas use YouTube red instead of the Spotify green. Tailwind
+ * reads these variables at the element (`@theme inline`), so any subtree with
+ * this class, portals included when the class is on the portaled element,
+ * gets red buttons, borders, focus rings, progress bars and checkboxes.
+ */
+.theme-youtube {
+  --primary: oklch(0.628 0.258 29.23); /* #FF0000 */
+  --primary-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.628 0.258 29.23 / 60%);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

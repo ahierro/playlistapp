@@ -16,7 +16,10 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SERVICE_LABELS } from "@/lib/music";
+import { SERVICES } from "@/lib/services";
 import {
+  ADAPTERS,
   continueAll,
   continueJob,
   getServerTransferState,
@@ -28,7 +31,7 @@ import {
   removeAddedTrack,
   removeJob,
   retryUnmatched,
-  setTrackVideo,
+  setTrackTarget,
   subscribeTransfers,
   summarizeJob,
   type JobStatus,
@@ -36,10 +39,6 @@ import {
   type TransferTrack,
 } from "@/lib/transfer-store";
 import { cn } from "@/lib/utils";
-import {
-  youtubeMusicPlaylistUrl,
-  youtubeMusicWatchUrl,
-} from "@/lib/youtube-client";
 
 const STATUS_LABEL: Record<JobStatus, string> = {
   queued: "Queued",
@@ -74,7 +73,11 @@ export function TransfersView({
   );
 
   const jobs = useMemo(() => [...state.jobs].reverse(), [state.jobs]);
-  const waitingQuota = state.jobs.some((job) => job.status === "paused-quota");
+  const waitingQuota = state.jobs.some(
+    (job) =>
+      job.status === "paused-quota" &&
+      (job.pausedBy ?? "youtube-quota") === "youtube-quota",
+  );
   const resumable = state.jobs.some(
     (job) => job.status === "paused" || job.status === "paused-quota",
   );
@@ -88,7 +91,11 @@ export function TransfersView({
           <Link href="/playlists" className="underline">
             Spotify playlists
           </Link>{" "}
-          page and press “Copy to YouTube Music”.
+          or{" "}
+          <Link href="/youtube-music/playlists" className="underline">
+            YouTube Music playlists
+          </Link>{" "}
+          page and press “Copy to …”.
         </p>
       </div>
     );
@@ -143,23 +150,38 @@ function JobCard({ job, queueRunning }: { job: TransferJob; queueRunning: boolea
     ? Math.round((summary.processed / summary.total) * 100)
     : 0;
   const playlistId = job.target.playlistId;
+  const adapter = ADAPTERS[job.direction];
+  const SourceLogo = SERVICES[adapter.source].icon;
+  const TargetLogo = SERVICES[adapter.target].icon;
 
   const reviewTracks = (job.tracks ?? []).filter((track) =>
     showAll ? track.status !== "pending" : needsReview(track),
   );
 
   return (
-    <article className="flex flex-col gap-3 rounded-xl border bg-card p-4">
+    <article
+      className={cn(
+        "flex flex-col gap-3 rounded-xl border bg-card p-4",
+        SERVICES[adapter.target].themeClass,
+      )}
+    >
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate font-semibold">
-            <a href={job.source.url} target="_blank" rel="noreferrer" className="hover:underline">
+          <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 font-semibold">
+            <SourceLogo className="size-4" />
+            <a
+              href={job.source.url}
+              target="_blank"
+              rel="noreferrer"
+              className="truncate hover:underline"
+            >
               {job.source.name}
             </a>
-            <span className="px-2 text-muted-foreground">→</span>
+            <span className="px-1 text-muted-foreground">→</span>
+            <TargetLogo className="size-4" />
             {playlistId ? (
               <a
-                href={youtubeMusicPlaylistUrl(playlistId)}
+                href={adapter.playlistUrl(playlistId)}
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center gap-1 hover:underline"
@@ -172,7 +194,9 @@ function JobCard({ job, queueRunning }: { job: TransferJob; queueRunning: boolea
             )}
           </p>
           <p className="text-xs text-muted-foreground">
-            {job.target.mode === "new" ? `New ${job.target.privacyStatus} playlist` : "Existing playlist"}
+            {job.target.mode === "new"
+              ? `New ${job.target.privacyStatus} ${SERVICE_LABELS[adapter.target]} playlist`
+              : `Existing ${SERVICE_LABELS[adapter.target]} playlist`}
             {" · "}
             <span
               className={cn(
@@ -225,6 +249,12 @@ function JobCard({ job, queueRunning }: { job: TransferJob; queueRunning: boolea
         </div>
       </header>
 
+      {job.notice && job.status === "running" && (
+        <p className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground" aria-live="polite">
+          {job.notice}
+        </p>
+      )}
+
       {job.error && (
         <p className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm">
           <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
@@ -250,7 +280,7 @@ function JobCard({ job, queueRunning }: { job: TransferJob; queueRunning: boolea
             <Loader2 className="size-3 animate-spin" />
           )}
           {job.tracks === null ? (
-            <span>Reading the Spotify playlist…</span>
+            <span>Reading the {SERVICE_LABELS[adapter.source]} playlist…</span>
           ) : (
             <>
               <span>
@@ -302,7 +332,12 @@ function JobCard({ job, queueRunning }: { job: TransferJob; queueRunning: boolea
               <ul className="flex flex-col divide-y rounded-lg border">
                 {reviewTracks.map((track) => (
                   <li key={track.index}>
-                    <TrackRow jobId={job.id} track={track} canEdit={Boolean(playlistId)} />
+                    <TrackRow
+                      jobId={job.id}
+                      track={track}
+                      canEdit={Boolean(playlistId)}
+                      direction={job.direction}
+                    />
                   </li>
                 ))}
               </ul>
@@ -337,11 +372,15 @@ function TrackRow({
   jobId,
   track,
   canEdit,
+  direction,
 }: {
   jobId: string;
   track: TransferTrack;
   canEdit: boolean;
+  direction: TransferJob["direction"];
 }) {
+  const adapter = ADAPTERS[direction];
+  const targetLabel = SERVICE_LABELS[adapter.target];
   const [link, setLink] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -360,9 +399,11 @@ function TrackRow({
   }
 
   const doubtful = track.status === "added" && track.confidence === "low";
-  const searchUrl = `https://music.youtube.com/search?q=${encodeURIComponent(
-    `${track.artists[0] ?? ""} ${track.name}`,
-  )}`;
+  const searchUrl = adapter.searchUrl(track);
+  // YouTube removes by playlist item id; Spotify by track URI.
+  const removable =
+    track.status === "added" &&
+    (adapter.target === "spotify" ? Boolean(track.targetId) : Boolean(track.itemId));
 
   return (
     <div className="flex flex-col gap-2 p-3 text-sm">
@@ -378,15 +419,16 @@ function TrackRow({
             {track.confidence === "manual" && " · picked by you"}
             {track.error && ` · ${track.error}`}
           </p>
-          {track.videoId && (
+          {track.targetId && (
             <a
-              href={youtubeMusicWatchUrl(track.videoId)}
+              href={adapter.trackUrl(track.targetId)}
               target="_blank"
               rel="noreferrer"
               className="mt-0.5 inline-flex max-w-full items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:underline"
             >
               <span className="truncate">
-                {track.videoTitle} · {track.channelTitle}
+                {track.targetTitle || "Untitled"}
+                {track.targetSubtitle ? ` · ${track.targetSubtitle}` : ""}
               </span>
               <ExternalLink className="size-3 shrink-0" />
             </a>
@@ -400,13 +442,17 @@ function TrackRow({
               Looks right
             </Button>
           )}
-          {track.status === "added" && track.itemId && canEdit && (
+          {removable && canEdit && (
             <Button
               size="sm"
               variant="outline"
               disabled={busy}
               onClick={() => run(() => removeAddedTrack(jobId, track.index))}
-              title="Remove this video from the YouTube playlist (50 quota units)"
+              title={
+                adapter.target === "spotify"
+                  ? "Remove this track from the Spotify playlist"
+                  : "Remove this video from the YouTube playlist (50 quota units)"
+              }
             >
               <Trash2 />
               Remove
@@ -425,7 +471,7 @@ function TrackRow({
           className="flex flex-wrap items-center gap-2"
           onSubmit={(event) => {
             event.preventDefault();
-            if (link.trim()) void run(() => setTrackVideo(jobId, track.index, link));
+            if (link.trim()) void run(() => setTrackTarget(jobId, track.index, link));
           }}
         >
           <a
@@ -434,20 +480,20 @@ function TrackRow({
             rel="noreferrer"
             className="inline-flex items-center gap-1 text-xs text-muted-foreground underline"
           >
-            Search on YouTube Music
+            Search on {targetLabel}
             <ExternalLink className="size-3" />
           </a>
           <Input
             value={link}
             onChange={(event) => setLink(event.target.value)}
-            placeholder="Paste the right song's link"
-            aria-label={`YouTube link for ${track.name}`}
+            placeholder={adapter.linkHint}
+            aria-label={`${targetLabel} link for ${track.name}`}
             className="h-8 min-w-48 flex-1 text-xs"
             disabled={busy}
           />
           <Button size="sm" type="submit" disabled={busy || !link.trim()}>
             {busy ? <Loader2 className="animate-spin" /> : <Link2 />}
-            {track.itemId ? "Replace" : "Add"}
+            {track.status === "added" ? "Replace" : "Add"}
           </Button>
         </form>
       )}

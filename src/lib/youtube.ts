@@ -4,7 +4,13 @@ import {
   buildSearchQuery,
   parseIsoDuration,
   pickBestMatch,
+  ARTIST_SAMPLE_SIZE,
+  isArtistChannel,
+  MUSIC_CATEGORY_ID,
+  MUSIC_TOPIC_NAMES,
+  needsUploadCheck,
   type MatchQuery,
+  type UploadSample,
   type ScoredCandidate,
   type VideoCandidate,
 } from "@/lib/youtube-match";
@@ -66,6 +72,7 @@ export async function youtubeFetch<T>(
     method,
     headers: {
       Authorization: `Bearer ${accessToken}`,
+      "Cache-Control": "no-cache",
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -260,8 +267,6 @@ export async function getYouTubePlaylists(
   return { items, nextPageToken: data.nextPageToken ?? null };
 }
 
-/** YouTube's "Music" video category. */
-const MUSIC_CATEGORY_ID = "10";
 
 /**
  * YouTube and YouTube Music share one set of playlists, and the API has no
@@ -344,6 +349,7 @@ type RawPlaylistItem = {
     description?: string;
     videoOwnerChannelTitle?: string;
   };
+  contentDetails?: { videoId?: string };
 };
 
 /** One page of a playlist's contents, already parsed into songs. */
@@ -358,7 +364,7 @@ export async function getYouTubePlaylistItems(
     data = await youtubeFetch<PagedResponse<RawPlaylistItem>>(
       "/playlistItems",
       {
-        part: "snippet",
+        part: "snippet,contentDetails",
         playlistId,
         maxResults: "50",
         pageToken: pageToken ?? undefined,
@@ -377,10 +383,35 @@ export async function getYouTubePlaylistItems(
     throw error;
   }
 
+  // Durations help match the song on Spotify: one extra unit per page.
+  const videoIds = (data.items ?? []).flatMap((entry) =>
+    entry.contentDetails?.videoId ? [entry.contentDetails.videoId] : [],
+  );
+  const durations = new Map<string, number | null>();
+  if (videoIds.length > 0) {
+    try {
+      const videos = await youtubeFetch<
+        PagedResponse<{ id: string; contentDetails?: { duration?: string } }>
+      >(
+        "/videos",
+        { part: "contentDetails", id: videoIds.join(","), maxResults: "50" },
+        accessToken,
+      );
+      for (const video of videos.items ?? []) {
+        durations.set(video.id, parseIsoDuration(video.contentDetails?.duration));
+      }
+    } catch (error) {
+      if (!(error instanceof YouTubeApiError) || error.status === 429) throw error;
+      console.error("[youtube] Could not read video durations", error);
+    }
+  }
+
   const items: ExportedTrack[] = [];
   for (const entry of data.items ?? []) {
     const track = entry.snippet ? parseYouTubeTrack(entry.snippet) : null;
-    if (track) items.push(track);
+    if (!track) continue;
+    const seconds = durations.get(entry.contentDetails?.videoId ?? "");
+    items.push(seconds ? { ...track, durationMs: seconds * 1000 } : track);
   }
 
   return { items, next: data.nextPageToken ?? null };
@@ -411,23 +442,7 @@ export type YouTubeArtistsPage = {
  * Freebase topics YouTube assigns to music channels, as Wikipedia URLs.
  * https://developers.google.com/youtube/v3/docs/channels#topicDetails
  */
-const MUSIC_TOPICS = new Set([
-  "Music",
-  "Christian_music",
-  "Classical_music",
-  "Country_music",
-  "Electronic_music",
-  "Hip_hop_music",
-  "Independent_music",
-  "Jazz",
-  "Music_of_Asia",
-  "Music_of_Latin_America",
-  "Pop_music",
-  "Reggae",
-  "Rhythm_and_blues",
-  "Rock_music",
-  "Soul_music",
-]);
+const MUSIC_TOPICS = MUSIC_TOPIC_NAMES;
 
 export function topicName(url: string): string {
   return decodeURIComponent(url.split("/wiki/").at(-1) ?? "");
@@ -444,19 +459,98 @@ type RawSubscription = {
 type RawChannel = {
   id: string;
   topicDetails?: { topicCategories?: string[] };
+  contentDetails?: { relatedPlaylists?: { uploads?: string } };
 };
 
+export { isArtistChannel };
+
 /**
- * Whether a subscribed channel looks like an artist. YouTube has no "follow
- * artist" concept, so this is a heuristic:
- * - auto-generated "Name - Topic" channels and "NameVEVO" channels, or
- * - channels YouTube itself tagged with a music topic.
- * A music reviewer or a label can slip in, and an artist YouTube never tagged can
- * be left out.
+ * Upload-based verdicts, kept for a week in server memory (lost on restart,
+ * and on every edit of this file in dev, which reloads the module).
+ * Checking a channel costs ~1.2 quota units and the full .txt export walks the
+ * subscriptions three times, so this saves a lot.
  */
-export function isArtistChannel(title: string, topics: string[]): boolean {
-  if (/\s-\s+topic$/iu.test(title) || /vevo$/iu.test(title)) return true;
-  return topics.some((topic) => MUSIC_TOPICS.has(topic));
+const ARTIST_VERDICT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const artistVerdicts = new Map<string, { artist: boolean; at: number }>();
+
+/**
+ * Category and duration of each channel's latest uploads, for the channels
+ * given. One playlistItems call per channel plus one videos call per 50 videos.
+ */
+async function getUploadSamples(
+  accessToken: string,
+  channels: { id: string; uploads: string }[],
+): Promise<Map<string, UploadSample[]>> {
+  const videoIdsByChannel = new Map<string, string[]>();
+
+  await mapWithConcurrency(channels, 8, async ({ id, uploads }) => {
+    try {
+      const page = await youtubeFetch<
+        PagedResponse<{ contentDetails?: { videoId?: string } }>
+      >(
+        "/playlistItems",
+        {
+          part: "contentDetails",
+          playlistId: uploads,
+          maxResults: String(ARTIST_SAMPLE_SIZE),
+        },
+        accessToken,
+      );
+      videoIdsByChannel.set(
+        id,
+        (page.items ?? []).flatMap((item) =>
+          item.contentDetails?.videoId ? [item.contentDetails.videoId] : [],
+        ),
+      );
+    } catch (error) {
+      // Channels without public uploads answer 404: judge them on topics alone.
+      if (error instanceof YouTubeApiError && (error.status === 404 || error.status === 403)) {
+        videoIdsByChannel.set(id, []);
+        return;
+      }
+      throw error;
+    }
+  });
+
+  const allIds = [...videoIdsByChannel.values()].flat();
+  const sampleByVideo = new Map<string, UploadSample>();
+  for (let i = 0; i < allIds.length; i += 50) {
+    // Same 1-unit cost whatever the parts requested.
+    const videos = await youtubeFetch<
+      PagedResponse<{
+        id: string;
+        snippet?: { categoryId?: string };
+        contentDetails?: { duration?: string };
+      }>
+    >(
+      "/videos",
+      {
+        part: "snippet,contentDetails",
+        id: allIds.slice(i, i + 50).join(","),
+        maxResults: "50",
+      },
+      accessToken,
+    );
+    for (const video of videos.items ?? []) {
+      if (!video.snippet?.categoryId) continue;
+      sampleByVideo.set(video.id, {
+        categoryId: video.snippet.categoryId,
+        durationSeconds: parseIsoDuration(video.contentDetails?.duration),
+      });
+    }
+  }
+
+  const result = new Map<string, UploadSample[]>();
+  for (const [channelId, ids] of videoIdsByChannel) {
+    result.set(
+      channelId,
+      ids.flatMap((videoId) => {
+        const sample = sampleByVideo.get(videoId);
+        return sample ? [sample] : [];
+      }),
+    );
+  }
+  return result;
 }
 
 /**
@@ -496,12 +590,12 @@ export async function getYouTubeArtists(
     return id ? [{ id, snippet: item.snippet! }] : [];
   });
 
-  const topicsById = new Map<string, string[]>();
+  const channelInfo = new Map<string, { topics: string[]; uploads?: string }>();
   if (subscribed.length > 0) {
     const channels = await youtubeFetch<PagedResponse<RawChannel>>(
       "/channels",
       {
-        part: "topicDetails",
+        part: "topicDetails,contentDetails",
         id: subscribed.map((channel) => channel.id).join(","),
         maxResults: "50",
       },
@@ -509,18 +603,44 @@ export async function getYouTubeArtists(
     );
 
     for (const channel of channels.items ?? []) {
-      topicsById.set(
-        channel.id,
-        (channel.topicDetails?.topicCategories ?? []).map(topicName),
-      );
+      channelInfo.set(channel.id, {
+        topics: (channel.topicDetails?.topicCategories ?? []).map(topicName),
+        uploads: channel.contentDetails?.relatedPlaylists?.uploads,
+      });
     }
   }
+
+  // Only channels that pass the topic check and are not cached need their uploads read.
+  const now = Date.now();
+  const toCheck: { id: string; uploads: string }[] = [];
+  for (const { id, snippet } of subscribed) {
+    const info = channelInfo.get(id);
+    const cached = artistVerdicts.get(id);
+    if (cached && now - cached.at < ARTIST_VERDICT_TTL_MS) continue;
+    if (info?.uploads && needsUploadCheck(snippet.title ?? "", info.topics)) {
+      toCheck.push({ id, uploads: info.uploads });
+    }
+  }
+  const samples = await getUploadSamples(accessToken, toCheck);
 
   const items: YouTubeArtist[] = [];
   for (const { id, snippet } of subscribed) {
     const title = snippet.title ?? "";
-    const topics = topicsById.get(id) ?? [];
-    if (!title || !isArtistChannel(title, topics)) continue;
+    if (!title) continue;
+    const topics = channelInfo.get(id)?.topics ?? [];
+
+    let artist: boolean;
+    const cached = artistVerdicts.get(id);
+    if (samples.has(id)) {
+      artist = isArtistChannel(title, topics, samples.get(id)!);
+      artistVerdicts.set(id, { artist, at: now });
+    } else if (cached && now - cached.at < ARTIST_VERDICT_TTL_MS) {
+      artist = cached.artist;
+    } else {
+      // Topic/VEVO channels, channels without music topics, or no uploads playlist.
+      artist = isArtistChannel(title, topics, needsUploadCheck(title, topics) ? [] : null);
+    }
+    if (!artist) continue;
 
     items.push({
       id,
@@ -805,4 +925,56 @@ function decodeEntities(value: string): string {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&");
+}
+
+/* ------------------------------------------------------------------ */
+/* Subscribing to channels (the "only on Spotify" list)                */
+/* ------------------------------------------------------------------ */
+
+export type YouTubeChannelHit = {
+  channelId: string;
+  title: string;
+  imageUrl: string | null;
+};
+
+/** Channels matching a name (100 quota units). */
+export async function searchChannels(
+  accessToken: string,
+  query: string,
+): Promise<YouTubeChannelHit[]> {
+  const data = await youtubeFetch<
+    PagedResponse<{
+      id?: { channelId?: string };
+      snippet?: { title?: string; thumbnails?: Thumbnails };
+    }>
+  >(
+    "/search",
+    { part: "snippet", q: query, type: "channel", maxResults: "10" },
+    accessToken,
+  );
+
+  return (data.items ?? []).flatMap((item) =>
+    item.id?.channelId
+      ? [
+          {
+            channelId: item.id.channelId,
+            title: item.snippet?.title ?? "",
+            imageUrl: toImages(item.snippet?.thumbnails)[0]?.url ?? null,
+          },
+        ]
+      : [],
+  );
+}
+
+/** Subscribes to a channel (50 quota units). */
+export async function subscribeToChannel(
+  accessToken: string,
+  channelId: string,
+): Promise<void> {
+  await youtubeFetch("/subscriptions", { part: "snippet" }, accessToken, {
+    method: "POST",
+    body: {
+      snippet: { resourceId: { kind: "youtube#channel", channelId } },
+    },
+  });
 }

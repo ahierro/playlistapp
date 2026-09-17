@@ -8,6 +8,11 @@ import { getCurrentUserId } from "@/lib/spotify";
  * - user-follow-read: artists the user follows
  * - playlist-read-private: their playlists, private ones included
  * - playlist-read-collaborative: plus the collaborative ones
+ * - playlist-modify-public / playlist-modify-private: create playlists and add
+ *   or remove their tracks (YouTube Music -> Spotify copy)
+ * - user-follow-modify / user-library-modify: follow an artist from the
+ *   "only on YouTube Music" list (February 2026 moved following to
+ *   `PUT /me/library`, which is the library scope's territory)
  *
  * We do not request `user-read-email`: since the February 2026 changes the User
  * object no longer returns `email` (nor country, product, followers), so the scope
@@ -20,6 +25,10 @@ export const SPOTIFY_SCOPES = [
   "user-follow-read",
   "playlist-read-private",
   "playlist-read-collaborative",
+  "playlist-modify-public",
+  "playlist-modify-private",
+  "user-follow-modify",
+  "user-library-modify",
 ] as const;
 
 const AUTHORIZATION_URL =

@@ -18,9 +18,13 @@ export default async function YouTubeMusicArtistsPage() {
   }
 
   return (
-    <AppShell accounts={accounts} title="Artists on YouTube Music">
+    <AppShell accounts={accounts} theme="youtube" title="Artists on YouTube Music">
       {/* Scoping the cache by user id keeps two accounts on the same browser apart. */}
-      <FollowedArtists userId={account.id} service="youtube-music" />
+      <FollowedArtists
+        userId={account.id}
+        service="youtube-music"
+        otherUserId={accounts.spotify?.id}
+      />
     </AppShell>
   );
 }

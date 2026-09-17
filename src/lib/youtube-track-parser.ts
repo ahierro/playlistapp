@@ -80,7 +80,10 @@ const TRAILING_NOISE = new RegExp(
 
 const TITLE_SEPARATOR = /^(.+?)\s+[-–—]\s+(.+)$/u;
 
+/** Exact suffix of YouTube's auto-generated artist channels. */
 const TOPIC_SUFFIX = /\s+-\s+topic$/iu;
+/** Looser form for cleaning names: "Name Topic", "Name - Topic", "Name – Topic". */
+const TOPIC_NOISE = /\s*[-–—]?\s*\btopic$/iu;
 const VEVO_SUFFIX = /\s*vevo$/iu;
 
 function isUnavailable(snippet: YouTubeItemSnippet) {
@@ -88,10 +91,14 @@ function isUnavailable(snippet: YouTubeItemSnippet) {
   return !title || (UNAVAILABLE_TITLES.has(title) && !snippet.videoOwnerChannelTitle);
 }
 
-/** "Adele - Topic" -> "Adele", "TaylorSwiftVEVO" -> "Taylor Swift". */
+/** "Adele - Topic" / "Adele Topic" -> "Adele", "TaylorSwiftVEVO" -> "Taylor Swift". */
 export function cleanChannelName(channel: string): string {
   const trimmed = channel.trim();
-  if (TOPIC_SUFFIX.test(trimmed)) return trimmed.replace(TOPIC_SUFFIX, "");
+  if (TOPIC_NOISE.test(trimmed)) {
+    const base = trimmed.replace(TOPIC_NOISE, "").trim();
+    // A channel literally called "Topic" keeps its name.
+    if (base) return base;
+  }
 
   if (VEVO_SUFFIX.test(trimmed)) {
     const base = trimmed.replace(VEVO_SUFFIX, "");

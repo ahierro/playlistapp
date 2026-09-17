@@ -4,7 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import { Copy, FileJson, RefreshCw, Search } from "lucide-react";
 
 import { CardGridSkeleton } from "@/components/card-grid-skeleton";
-import { CopyToYouTubeDialog } from "@/components/copy-to-youtube-dialog";
+import { CopyPlaylistsDialog } from "@/components/copy-playlists-dialog";
 import { PlaylistCard } from "@/components/playlist-card";
 import { ScopeError } from "@/components/scope-error";
 import { Button } from "@/components/ui/button";
@@ -28,17 +28,26 @@ type PlaylistSelection =
 export function PlaylistsList({
   userId,
   service,
-  youtubeUserId,
+  otherUserId,
 }: {
   userId: string;
   service: MusicService;
-  /** Set on the Spotify page when YouTube Music is connected: enables copying. */
-  youtubeUserId?: string;
+  /**
+   * The account on the other service, when it is connected too. Enables
+   * copying the selected playlists there.
+   */
+  otherUserId?: string;
 }) {
   const config = SERVICES[service];
   const [copyOpen, setCopyOpen] = useState(false);
+  const copyTarget: MusicService =
+    service === "spotify" ? "youtube-music" : "spotify";
   const [query, setQuery] = useState("");
-  const [selection, setSelection] = useState<PlaylistSelection>({ mode: "all" });
+  // Nothing selected until the user picks: no accidental export or copy of everything.
+  const [selection, setSelection] = useState<PlaylistSelection>({
+    mode: "custom",
+    ids: new Set(),
+  });
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(
     null,
   );
@@ -183,7 +192,7 @@ export function PlaylistsList({
                 checked={musicOnly}
                 onChange={(event) => {
                   setMusicOnly(event.target.checked);
-                  setSelection({ mode: "all" });
+                  setSelection({ mode: "custom", ids: new Set() });
                 }}
                 disabled={exportRunning}
                 className="accent-primary"
@@ -261,19 +270,23 @@ export function PlaylistsList({
                   size="sm"
                   onClick={() => exportAbortRef.current?.abort()}
                 >
-                  Cancel export
+                  Cancel download
                 </Button>
               ) : (
                 <>
-                  {youtubeUserId && service === "spotify" && (
+                  {otherUserId && (
                     <Button
                       size="sm"
                       variant="outline"
+                      className={cn(
+                        SERVICES[copyTarget].themeClass,
+                        "hover:border-primary/60",
+                      )}
                       onClick={() => setCopyOpen(true)}
                       disabled={selectedPlaylists.length === 0 || busy}
                     >
                       <Copy />
-                      Copy to YouTube Music
+                      Copy to {SERVICES[copyTarget].label}
                     </Button>
                   )}
                   <Button
@@ -282,7 +295,7 @@ export function PlaylistsList({
                     disabled={selectedPlaylists.length === 0 || busy}
                   >
                     <FileJson />
-                    Export selected
+                    Download JSON data
                   </Button>
                 </>
               )}
@@ -313,13 +326,16 @@ export function PlaylistsList({
         </div>
       )}
 
-      {youtubeUserId && (
-        <CopyToYouTubeDialog
+      {otherUserId && (
+        <CopyPlaylistsDialog
+          direction={
+            service === "spotify" ? "spotify-to-youtube" : "youtube-to-spotify"
+          }
           open={copyOpen}
           onOpenChange={setCopyOpen}
           playlists={selectedPlaylists}
-          spotifyUserId={userId}
-          youtubeUserId={youtubeUserId}
+          spotifyUserId={service === "spotify" ? userId : otherUserId}
+          youtubeUserId={service === "spotify" ? otherUserId : userId}
         />
       )}
 

@@ -117,12 +117,43 @@ reads it through the official **YouTube Data API v3** after a Google sign-in.
   (`src/lib/youtube-track-parser.ts`).
 - **Artists**: YouTube has no "follow artist", so the app lists your **channel subscriptions that
   look like artists**: `Name - Topic` and `NameVEVO` channels, or channels YouTube tagged with a
-  music topic. It is a heuristic: a music reviewer or a label can slip in, and duplicates such as
-  `Adele` / `Adele - Topic` are merged.
-  `subscriptions.list` stops paginating after **~1,000 items** per walk, whatever the account
-  really has, so the app walks the list three times (`relevance`, `alphabetical`, `unread`) and
-  merges the results. That reaches far more of a big subscription list, but beyond ~1,000
+  music topic **whose last 10 uploads are at least 60% songs**: Music category and no longer than
+  10 minutes (this drops reviewers, reaction, podcast and gear channels; a single concert or full
+  album does not disqualify an artist, it just does not count as a song). A channel with fewer than 3 uploads is kept only if its
+  topic is a specific genre. It is still a heuristic, and duplicates such as
+  `Adele` / `Adele - Topic` are merged. Checking uploads costs about 1-2 quota units per channel;
+  verdicts are cached in server memory for a week.
+  Both artist pages load in batches of 20 as you scroll (`src/lib/artist-pager.ts`): walking
+  everything up front took too long. The **.txt download** is what fetches the complete list: the
+  browser walks every page itself, showing a progress bar (and a Cancel button), saves the result
+  in `localStorage` — so from then on the page opens with every artist straight from the cache —
+  and builds the .txt file from that same data. The refresh button
+  clears that cache and goes back to the first batch. `subscriptions.list` stops paginating
+  after **~1,000 items** per walk, whatever the account really has, so the download walks the list
+  three times (`relevance`, `alphabetical`, `unread`) and merges the results. That reaches far more of a big subscription list, but beyond ~1,000
   subscriptions it is still not guaranteed to be complete.
+
+### Compare both libraries
+
+Once the complete artist list has been downloaded on **both** artists pages (that is what saves
+them in `localStorage`), each page enables **Only on Spotify** and **Only on YouTube Music**.
+They open `/compare`, which lists the artists followed on one service and missing on the other,
+with a **Follow** button per artist.
+
+- Names are the only thing both services share, so they are matched loosely
+  (`src/lib/artist-compare.ts`): case, accents and punctuation are ignored, a leading "The" is
+  dropped and trailing words such as "Official", "Music", "VEVO" or "Topic" are removed. A stage
+  name spelled differently on each service still shows up as missing.
+- **Follow on Spotify** searches the artist by name and saves the exact match to the library
+  (`PUT /me/library`, which replaced `PUT /me/following` in February 2026). It needs the
+  `user-follow-modify` and `user-library-modify` scopes: sessions created before they were added
+  do not have them, so **sign out of Spotify and sign in again**.
+- **Follow on YouTube Music** searches the channel (100 quota units) and subscribes (50), so about
+  **150 units per artist**, roughly 65 a day. The "Name - Topic" channel is preferred.
+- If neither service has an artist under that exact name, the row shows an error instead of
+  following the wrong one.
+- The lists in `localStorage` are not updated by following: download them again to refresh the
+  comparison.
 
 ### Copy Spotify playlists to YouTube Music
 
@@ -157,6 +188,25 @@ insert 50) out of 10,000 a day, so **about 65 songs a day**. The copy is built f
 Limits: podcast episodes are skipped, "Liked videos" cannot be a destination, and only
 Spotify playlists you own or collaborate on can be read. For more than ~65 songs a day, ask
 Google for more quota (Google Cloud Console → YouTube Data API v3 → Quotas); it needs a review.
+
+### Copy YouTube Music playlists to Spotify
+
+The same flow works the other way: the YouTube Music **Playlists** page gets a **Copy to Spotify**
+button, with the same destination choices (Spotify has no "unlisted": it is private or public)
+and the same review on the **Copies** page, where you can paste an `open.spotify.com/track/...`
+link for a song that was missed or matched wrong.
+
+- Songs are read from YouTube with their durations (about 2 quota units per 50 songs) and
+  searched on Spotify (`GET /search?type=track`, max 10 results): first as
+  `track:"..." artist:"..."`, then as plain text. Results are scored with the same rules as the
+  other direction.
+- Spotify has **no daily quota**, only a short rate limit. When it answers 429 the copy waits the
+  seconds Spotify asks for (up to a minute, a few times) and carries on; longer waits pause the
+  job. Tracks are added **50 per request**.
+- It needs the `playlist-modify-public` and `playlist-modify-private` scopes. Sessions created
+  before they were added do not have them: **sign out of Spotify and sign in again**.
+- Endpoints used (all in the February 2026 supported set): `POST /me/playlists`,
+  `POST` / `DELETE /playlists/{id}/items`, `GET /playlists/{id}/items`, `GET /tracks/{id}`.
 
 
 ### 2. Environment variables
@@ -194,6 +244,7 @@ src/
 │   ├── page.tsx                           # sign-in screen, or the sections of every connected service
 │   ├── artists/, playlists/               # Spotify pages
 │   ├── youtube-music/artists/, playlists/ # YouTube Music pages
+│   ├── compare/                           # artists missing on the other service
 │   └── transfers/                         # Spotify -> YouTube Music copies
 ├── components/                            # service-agnostic cards and lists, copy dialog, copies view
 └── lib/
@@ -204,7 +255,8 @@ src/
     ├── youtube.ts / youtube-client.ts     # YouTube Data API (server) / fetchers (browser)
     ├── youtube-track-parser.ts            # video -> song / artists / album
     ├── youtube-match.ts                   # scores search results against a Spotify track
-    └── transfer-store.ts                  # resumable Spotify -> YouTube Music copy queue
+    ├── artist-compare.ts                  # matches artist names across services
+    └── transfer-store.ts                  # resumable copy queue, both directions
 ```
 
 ### Authentication
@@ -216,7 +268,9 @@ Google on `/api/youtube-auth` with `ytm.authjs.*` cookies. Both can be connected
 has its own sign-out button in the header.
 
 
-- **Authorization Code** flow handled by Auth.js. Only scope requested: `user-follow-read`.
+- **Authorization Code** flow handled by Auth.js. Spotify scopes: `user-follow-read`,
+  `playlist-read-private`, `playlist-read-collaborative`, `playlist-modify-public`,
+  `playlist-modify-private`, `user-follow-modify` and `user-library-modify`.
 - The session is a **JWT in an httpOnly cookie**. The Spotify `access_token` lives there and is **never sent to the browser**: the client component asks `/api/spotify/following` for the data and the server adds the `Authorization` header.
 - The Spotify access token lasts 1 hour. The `jwt` callback renews it on its own with the `refresh_token` (with a 60s margin). If the refresh fails, the session is marked with `error: "RefreshTokenError"` and the app sends you back to the login.
 

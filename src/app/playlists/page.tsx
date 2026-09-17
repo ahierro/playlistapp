@@ -21,7 +21,7 @@ export default async function PlaylistsPage() {
       <PlaylistsList
         userId={account.id}
         service="spotify"
-        youtubeUserId={accounts["youtube-music"]?.id}
+        otherUserId={accounts["youtube-music"]?.id}
       />
     </AppShell>
   );

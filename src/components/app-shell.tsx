@@ -6,9 +6,12 @@ import { MainNav } from "@/components/main-nav";
 import type { Accounts } from "@/lib/accounts";
 import type { MusicService } from "@/lib/music";
 import { SERVICES } from "@/lib/services";
+import { cn } from "@/lib/utils";
 
 type Props = {
   accounts: Accounts;
+  /** Brand color for the page content (YouTube pages are red). */
+  theme?: "spotify" | "youtube";
   title: string;
   children: ReactNode;
 };
@@ -25,7 +28,7 @@ const ORDER: MusicService[] = ["spotify", "youtube-music"];
  * route group would mean deleting the old files, and the bridge to your
  * machine can write but not delete. This way the change is purely additive.
  */
-export function AppShell({ accounts, title, children }: Props) {
+export function AppShell({ accounts, theme = "spotify", title, children }: Props) {
   const connected = ORDER.filter((service) => accounts[service]);
 
   return (
@@ -53,7 +56,7 @@ export function AppShell({ accounts, title, children }: Props) {
               return (
                 <li
                   key={service}
-                  className="flex min-w-0 items-center gap-2 rounded-full border bg-card py-1 pr-1 pl-1"
+                  className={cn(SERVICES[service].themeClass, "flex min-w-0 items-center gap-2 rounded-full border bg-card py-1 pr-1 pl-1")}
                 >
                   {account.image ? (
                     <Image
@@ -64,9 +67,7 @@ export function AppShell({ accounts, title, children }: Props) {
                       className="size-7 rounded-full object-cover"
                     />
                   ) : (
-                    <span className="flex size-7 items-center justify-center rounded-full bg-primary/15 text-primary">
-                      <Icon className="size-4" />
-                    </span>
+                    <Icon className="size-7" />
                   )}
                   <div className="min-w-0 leading-tight">
                     <p className="max-w-40 truncate text-sm font-semibold">
@@ -87,7 +88,12 @@ export function AppShell({ accounts, title, children }: Props) {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-8">
+      <main
+        className={cn(
+          "mx-auto w-full max-w-6xl flex-1 px-6 py-8",
+          theme === "youtube" && "theme-youtube",
+        )}
+      >
         <h1 className="mb-6 text-2xl font-bold tracking-tight">{title}</h1>
         {children}
       </main>

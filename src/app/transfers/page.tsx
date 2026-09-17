@@ -4,7 +4,7 @@ import { AppShell } from "@/components/app-shell";
 import { TransfersView } from "@/components/transfers-view";
 import { getAccounts } from "@/lib/accounts";
 
-/** Spotify -> YouTube Music copies. Needs both accounts connected. */
+/** Playlist copies in both directions. Needs both accounts connected. */
 export default async function TransfersPage() {
   const accounts = await getAccounts();
   const spotify = accounts.spotify;
@@ -15,7 +15,7 @@ export default async function TransfersPage() {
   }
 
   return (
-    <AppShell accounts={accounts} title="Copies to YouTube Music">
+    <AppShell accounts={accounts} title="Playlist copies">
       <TransfersView spotifyUserId={spotify.id} youtubeUserId={youtube.id} />
     </AppShell>
   );

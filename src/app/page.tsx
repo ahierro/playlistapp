@@ -58,7 +58,12 @@ export default async function HomePage() {
 
           <div className="flex w-full flex-col items-stretch gap-3">
             {ORDER.map((service) => (
-              <SignInButton key={service} service={service} className="w-full" />
+              <SignInButton
+                key={service}
+                service={service}
+                variant="outline"
+                className="w-full"
+              />
             ))}
           </div>
 
@@ -76,10 +81,13 @@ export default async function HomePage() {
         {expiredNotice}
 
         {connected.map((service) => {
-          const { basePath, label, icon: Icon } = SERVICES[service];
+          const { basePath, label, icon: Icon, themeClass } = SERVICES[service];
 
           return (
-            <section key={service} className="flex flex-col gap-3">
+            <section
+              key={service}
+              className={`flex flex-col gap-3 ${themeClass}`}
+            >
               <h2 className="flex items-center gap-2 text-sm font-semibold tracking-wide text-muted-foreground uppercase">
                 <Icon className="size-4" />
                 {label}
@@ -111,8 +119,8 @@ export default async function HomePage() {
             <SectionLink
               href="/transfers"
               icon={ArrowLeftRight}
-              label="Spotify → YouTube Music"
-              description="Progress and review of your playlist copies."
+              label="Spotify ⇄ YouTube Music"
+              description="Copy playlists either way, then review the matches."
             />
           </section>
         )}
@@ -120,7 +128,7 @@ export default async function HomePage() {
         {missing.map((service) => (
           <section
             key={service}
-            className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed p-5"
+            className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed p-5 ${SERVICES[service].themeClass}`}
           >
             <p className="text-sm text-muted-foreground">
               Also use {SERVICE_LABELS[service]}? Both accounts can stay
@@ -129,6 +137,7 @@ export default async function HomePage() {
             <SignInButton
               service={service}
               size="sm"
+              variant="outline"
               label={`Connect ${SERVICE_LABELS[service]}`}
             />
           </section>

@@ -3,8 +3,11 @@ import test from "node:test";
 
 import {
   buildSearchQuery,
+  isArtistChannel,
+  needsUploadCheck,
   coreTitle,
   parseIsoDuration,
+  parseSpotifyTrackId,
   parseVideoId,
   pickBestMatch,
 } from "./youtube-match.ts";
@@ -98,4 +101,80 @@ test("parses video ids from URLs", () => {
   assert.equal(parseVideoId("dQw4w9WgXcQ"), "dQw4w9WgXcQ");
   assert.equal(parseVideoId("https://example.com/watch?v=dQw4w9WgXcQ"), null);
   assert.equal(parseVideoId("not a url"), null);
+});
+
+const music = (n, seconds = 210) =>
+  Array.from({ length: n }, () => ({ categoryId: "10", durationSeconds: seconds }));
+const other = (n) =>
+  Array.from({ length: n }, () => ({ categoryId: "24", durationSeconds: 900 }));
+
+test("Topic and VEVO channels are artists without looking at uploads", () => {
+  assert.equal(isArtistChannel("Soda Stereo - Topic", []), true);
+  assert.equal(isArtistChannel("QueenVEVO", []), true);
+  assert.equal(needsUploadCheck("Soda Stereo - Topic", ["Music"]), false);
+});
+
+test("channels without a music topic are never artists", () => {
+  assert.equal(isArtistChannel("Tech Reviews", ["Technology"], music(10)), false);
+  assert.equal(needsUploadCheck("Tech Reviews", ["Technology"]), false);
+});
+
+test("a music-topic channel needs mostly Music uploads", () => {
+  assert.equal(isArtistChannel("Some Band", ["Rock_music", "Music"], [...music(7), ...other(3)]), true);
+  assert.equal(isArtistChannel("Music Reactions", ["Music"], [...music(2), ...other(8)]), false);
+  assert.equal(isArtistChannel("Half And Half", ["Music"], [...music(5), ...other(5)]), false);
+});
+
+test("too few uploads fall back to requiring a specific genre", () => {
+  assert.equal(isArtistChannel("New Artist", ["Pop_music"], music(1)), true);
+  assert.equal(isArtistChannel("Empty Channel", ["Music"], []), false);
+});
+
+test("uploads longer than 10 minutes do not count as music", () => {
+  // Music category, but hour-long: a music podcast or review channel.
+  assert.equal(isArtistChannel("Music Podcast", ["Music"], music(10, 3600)), false);
+  // A band that also posted two full concerts is still an artist.
+  assert.equal(
+    isArtistChannel("Live Band", ["Rock_music"], [...music(8), ...music(2, 5400)]),
+    true,
+  );
+  // Exactly 10 minutes is still a song.
+  assert.equal(isArtistChannel("Long Songs", ["Music"], music(10, 600)), true);
+  // Unknown duration does not count against it.
+  assert.equal(isArtistChannel("No Duration", ["Music"], music(10, null)), true);
+});
+
+test("parses Spotify track ids", () => {
+  const id = "4iV5W9uYEdYUVa79Axb7Rh";
+  assert.equal(parseSpotifyTrackId(`https://open.spotify.com/track/${id}?si=abc`), id);
+  assert.equal(parseSpotifyTrackId(`https://open.spotify.com/intl-es/track/${id}`), id);
+  assert.equal(parseSpotifyTrackId(`spotify:track:${id}`), id);
+  assert.equal(parseSpotifyTrackId(id), id);
+  assert.equal(parseSpotifyTrackId(`https://open.spotify.com/album/${id}`), null);
+  assert.equal(parseSpotifyTrackId("https://example.com/track/" + id), null);
+});
+
+test("scores Spotify search results (artists as the channel)", () => {
+  const fromYouTube = { name: "Crimen", artists: ["Gustavo Cerati"], durationMs: 233_000 };
+  const studio = {
+    videoId: "spotify:track:studio",
+    title: "Crimen",
+    channelTitle: "Gustavo Cerati",
+    durationSeconds: 232.5,
+  };
+  const live = {
+    videoId: "spotify:track:live",
+    title: "Crimen - En Vivo",
+    channelTitle: "Gustavo Cerati",
+    durationSeconds: 260,
+  };
+  const other = {
+    videoId: "spotify:track:other",
+    title: "Crimen",
+    channelTitle: "Some Cover Band",
+    durationSeconds: 233,
+  };
+  const best = pickBestMatch(fromYouTube, [live, other, studio]);
+  assert.equal(best?.videoId, studio.videoId);
+  assert.equal(best?.confidence, "high");
 });

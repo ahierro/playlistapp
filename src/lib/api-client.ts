@@ -24,9 +24,20 @@ export class MissingScopeError extends Error {
  * copy queue pauses on it instead of failing.
  */
 export class QuotaExceededError extends Error {
-  constructor(message = "The API quota is exhausted") {
+  /** Seconds the service asked to wait (Spotify), when it said. */
+  readonly retryAfterSeconds?: number;
+  /** Label of the service that answered, e.g. "YouTube Music". */
+  readonly service?: string;
+
+  constructor(
+    message = "The API quota is exhausted",
+    retryAfterSeconds?: number,
+    service?: string,
+  ) {
     super(message);
     this.name = "QuotaExceededError";
+    this.retryAfterSeconds = retryAfterSeconds;
+    this.service = service;
   }
 }
 
@@ -55,7 +66,7 @@ export async function getJson<T>(
     | (T & { error?: string })
     | null;
 
-  throwForStatus(response, body?.error, service);
+  throwForStatus(response, body, service);
 
   if (!body) throw new Error(`${service} returned an empty response`);
 
@@ -64,12 +75,19 @@ export async function getJson<T>(
 
 function throwForStatus(
   response: Response,
-  message: string | undefined,
+  body: { error?: string; retryAfter?: unknown } | null,
   service: string,
 ) {
+  const message = body?.error;
   if (response.status === 401) throw new SessionExpiredError(message);
   if (response.status === 403) throw new MissingScopeError(message);
-  if (response.status === 429) throw new QuotaExceededError(message);
+  if (response.status === 429) {
+    const retryAfter =
+      typeof body?.retryAfter === "number"
+        ? body.retryAfter
+        : Number(response.headers.get("Retry-After")) || undefined;
+    throw new QuotaExceededError(message, retryAfter, service);
+  }
 
   if (!response.ok) {
     throw new ApiError(
@@ -105,10 +123,10 @@ export async function sendJson<T>(
   if (response.status === 204) return null;
 
   const data = (await response.json().catch(() => null)) as
-    | (T & { error?: string })
+    | (T & { error?: string; retryAfter?: unknown })
     | null;
 
-  throwForStatus(response, data?.error, service);
+  throwForStatus(response, data, service);
   return data;
 }
 
