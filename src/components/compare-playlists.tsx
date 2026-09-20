@@ -13,13 +13,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import {
   SERVICE_LABELS,
   type ExportedTrack,
@@ -251,34 +245,37 @@ function PlaylistPicker({
 }) {
   const Logo = SERVICES[side].icon;
 
+  const options: ComboboxOption[] = playlists.map((playlist) => ({
+    value: playlist.id,
+    label: playlist.name,
+    hint: playlist.trackCount === null ? undefined : `${playlist.trackCount}`,
+    keywords: playlist.ownerName ?? undefined,
+  }));
+
   return (
-    <label className="flex min-w-0 flex-col gap-1.5">
+    <div className="flex min-w-0 flex-col gap-1.5">
       <span className="flex items-center gap-1.5 text-sm font-medium">
         <Logo className="size-4" />
         {SERVICE_LABELS[side]}
       </span>
-      <Select value={value} onValueChange={onChange} disabled={disabled || loading}>
-        <SelectTrigger aria-label={`${SERVICE_LABELS[side]} playlist`}>
-          <SelectValue
-            placeholder={
-              loading
-                ? "Loading your playlists…"
-                : playlists.length === 0
-                  ? "No playlist to compare"
-                  : "Choose a playlist"
-            }
-          />
-        </SelectTrigger>
-        <SelectContent className={SERVICES[side].themeClass}>
-          {playlists.map((playlist) => (
-            <SelectItem key={playlist.id} value={playlist.id}>
-              {playlist.name}
-              {playlist.trackCount !== null ? ` (${playlist.trackCount})` : ""}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </label>
+      <Combobox
+        options={options}
+        value={value}
+        onValueChange={onChange}
+        disabled={disabled || loading}
+        aria-label={`${SERVICE_LABELS[side]} playlist`}
+        placeholder={
+          loading
+            ? "Loading your playlists…"
+            : playlists.length === 0
+              ? "No playlist to compare"
+              : "Choose a playlist"
+        }
+        searchPlaceholder="Type to filter by name or owner"
+        emptyMessage="No playlist matches"
+        contentClassName={SERVICES[side].themeClass}
+      />
+    </div>
   );
 }
 

@@ -93,10 +93,11 @@ export async function youtubeFetch<T>(
   const detail = errorBody?.error?.message ?? `HTTP ${response.status}`;
 
   // Google reports quota problems as 403; surface them as a rate limit so the UI
-  // does not tell the user to sign in again for nothing.
+  // does not tell the user to sign in again for nothing. When it resets is left
+  // to the client, which knows the reader's time zone.
   if (QUOTA_REASONS.has(reason)) {
     throw new YouTubeApiError(
-      `The YouTube Data API quota is exhausted (${reason}). It resets daily at midnight Pacific time.`,
+      `The YouTube Data API quota is exhausted (${reason}).`,
       429,
       reason,
     );

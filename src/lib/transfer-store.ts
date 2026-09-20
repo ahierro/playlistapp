@@ -415,11 +415,18 @@ function migrateJob(job: TransferJob): TransferJob {
       };
     }) ?? null;
 
+  const waitingForYouTube =
+    job.status === "paused-quota" &&
+    (job.pausedBy ?? "youtube-quota") === "youtube-quota";
+
   return {
     ...job,
     direction,
     tracks,
     notice: undefined,
+    // Jobs paused before quota stopped being reported as an error still carry
+    // its wording, in a time zone that is not the reader's.
+    error: waitingForYouTube ? undefined : job.error,
     // A reload interrupted it: it is resumable, not running.
     status: job.status === "running" ? "paused" : job.status,
   };
@@ -921,8 +928,11 @@ export async function runQueue() {
             status: "paused-quota",
             pausedBy: youtube ? "youtube-quota" : "spotify-rate-limit",
             notice: undefined,
+            // Running out of YouTube's daily quota is normal and expected, and
+            // the page already says when it comes back, in the reader's own
+            // time zone. Repeating the API's wording here only adds a red box.
             error: youtube
-              ? error.message
+              ? undefined
               : `Spotify asked to wait ${
                   error.retryAfterSeconds ? `${error.retryAfterSeconds} s` : "a while"
                 }. Press Continue later.`,

@@ -50,11 +50,44 @@ const STATUS_LABEL: Record<JobStatus, string> = {
   error: "Stopped",
 };
 
+/**
+ * The reset moment in the reader's own time zone. The offset is spelled out
+ * next to it, so "4 AM" is never mistaken for the Pacific midnight it is
+ * derived from.
+ */
 const timeFormat = new Intl.DateTimeFormat(undefined, {
   weekday: "short",
-  hour: "2-digit",
+  hour: "numeric",
   minute: "2-digit",
 });
+
+/**
+ * "UTC-3". `timeZoneName` would say "GMT-3" or an abbreviation nobody agrees
+ * on, so the offset in effect at that moment is written out instead.
+ */
+function utcOffset(at: number): string {
+  // getTimezoneOffset counts minutes behind UTC, the opposite of how it reads.
+  const minutes = -new Date(at).getTimezoneOffset();
+  if (minutes === 0) return "UTC";
+
+  const hours = Math.floor(Math.abs(minutes) / 60);
+  const rest = Math.abs(minutes) % 60;
+  return `UTC${minutes < 0 ? "-" : "+"}${hours}${
+    rest ? `:${String(rest).padStart(2, "0")}` : ""
+  }`;
+}
+
+const relativeFormat = new Intl.RelativeTimeFormat(undefined, {
+  numeric: "auto",
+});
+
+/** "in 6 hours", counted from now. */
+function timeUntil(at: number): string {
+  const minutes = Math.round((at - Date.now()) / 60_000);
+  if (minutes < 1) return relativeFormat.format(1, "minute");
+  if (minutes < 60) return relativeFormat.format(minutes, "minute");
+  return relativeFormat.format(Math.round(minutes / 60), "hour");
+}
 
 export function TransfersView({
   spotifyUserId,
@@ -104,19 +137,7 @@ export function TransfersView({
 
   return (
     <div className="flex flex-col gap-4">
-      {waitingQuota && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm">
-          <p>
-            YouTube&apos;s daily quota is used up. It resets around{" "}
-            <strong>{timeFormat.format(nextQuotaReset())}</strong> (midnight
-            Pacific time). Come back then and press Continue.
-          </p>
-          <Button size="sm" variant="outline" onClick={continueAll}>
-            <Play />
-            Try now
-          </Button>
-        </div>
-      )}
+      {waitingQuota && <QuotaBanner />}
 
       {!waitingQuota && resumable && !state.running && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/30 p-4 text-sm">
@@ -140,6 +161,36 @@ export function TransfersView({
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+/**
+ * Own component so the clock it keeps only re-renders the banner, and only
+ * while a copy is actually waiting for the quota.
+ */
+function QuotaBanner() {
+  const [reset, setReset] = useState(nextQuotaReset);
+
+  useEffect(() => {
+    const timer = setInterval(() => setReset(nextQuotaReset()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm">
+      <p>
+        YouTube&apos;s daily quota is used up. It comes back{" "}
+        <strong>{timeUntil(reset)}</strong>, at{" "}
+        <strong>
+          {timeFormat.format(reset)} {utcOffset(reset)}
+        </strong>
+        . Come back then and press Continue.
+      </p>
+      <Button size="sm" variant="outline" onClick={continueAll}>
+        <Play />
+        Try now
+      </Button>
     </div>
   );
 }
