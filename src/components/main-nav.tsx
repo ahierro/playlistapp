@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeftRight, ListMusic, Users } from "lucide-react";
+import { ArrowLeftRight, GitCompareArrows, ListMusic, Users } from "lucide-react";
 
 import type { MusicService } from "@/lib/music";
 import { SERVICES } from "@/lib/services";
@@ -23,7 +23,7 @@ const linkClass = (active: boolean) =>
 
 /**
  * One pill per connected service, each with its Artists / Playlists links, plus
- * the copies page when both services are connected.
+ * the compare and copies pages when both services are connected.
  */
 export function MainNav({
   services,
@@ -78,7 +78,17 @@ export function MainNav({
       })}
 
       {showTransfers && (
-        <div className="rounded-full bg-secondary p-1">
+        <div className="flex items-center gap-1 rounded-full bg-secondary p-1">
+          <Link
+            href="/compare/playlists"
+            aria-current={
+              pathname === "/compare/playlists" ? "page" : undefined
+            }
+            className={linkClass(pathname === "/compare/playlists")}
+          >
+            <GitCompareArrows className="size-4" />
+            Compare
+          </Link>
           <Link
             href="/transfers"
             aria-current={pathname === "/transfers" ? "page" : undefined}

@@ -30,6 +30,7 @@ import {
   pauseJob,
   removeAddedTrack,
   removeJob,
+  retryTrack,
   retryUnmatched,
   setTrackTarget,
   subscribeTransfers,
@@ -337,6 +338,7 @@ function JobCard({ job, queueRunning }: { job: TransferJob; queueRunning: boolea
                       track={track}
                       canEdit={Boolean(playlistId)}
                       direction={job.direction}
+                      jobRunning={job.status === "running"}
                     />
                   </li>
                 ))}
@@ -373,11 +375,13 @@ function TrackRow({
   track,
   canEdit,
   direction,
+  jobRunning,
 }: {
   jobId: string;
   track: TransferTrack;
   canEdit: boolean;
   direction: TransferJob["direction"];
+  jobRunning: boolean;
 }) {
   const adapter = ADAPTERS[direction];
   const targetLabel = SERVICE_LABELS[adapter.target];
@@ -400,6 +404,10 @@ function TrackRow({
 
   const doubtful = track.status === "added" && track.confidence === "low";
   const searchUrl = adapter.searchUrl(track);
+  // A failed add is usually a passing YouTube hiccup, so one song can be tried
+  // again on its own instead of resuming the whole copy.
+  const retryable =
+    canEdit && (track.status === "failed" || track.status === "not-found");
   // YouTube removes by playlist item id; Spotify by track URI.
   const removable =
     track.status === "added" &&
@@ -456,6 +464,24 @@ function TrackRow({
             >
               <Trash2 />
               Remove
+            </Button>
+          )}
+          {retryable && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy || jobRunning}
+              onClick={() => run(() => retryTrack(jobId, track.index))}
+              title={
+                jobRunning
+                  ? "Pause the copy to retry a single song"
+                  : track.status === "not-found"
+                    ? `Search ${targetLabel} again for this song and add it`
+                    : `Try adding this song to ${targetLabel} again`
+              }
+            >
+              {busy ? <Loader2 className="animate-spin" /> : <RotateCcw />}
+              Retry
             </Button>
           )}
           {track.status === "not-found" && !track.reviewed && (

@@ -570,6 +570,43 @@ export function enqueueTransfers(
   void runQueue();
 }
 
+/**
+ * Queues a copy of a hand-picked set of songs instead of a whole playlist, the
+ * way the playlist comparison sends over the ones that are missing. The tracks
+ * are stored on the job right away, so the runner never reads the source.
+ */
+export function enqueueTrackTransfer(
+  direction: Direction,
+  source: { id: string; name: string; url: string },
+  tracks: ExportedTrack[],
+  target: NewTarget,
+): string {
+  const sourceLabel = SERVICE_LABELS[ADAPTERS[direction].source];
+  const now = Date.now();
+  const job: TransferJob = {
+    id: newId(),
+    direction,
+    source,
+    target:
+      target.mode === "new"
+        ? {
+            mode: "new",
+            title: target.title?.trim() || source.name,
+            description: `Copied from ${sourceLabel}: ${source.url}`,
+            privacyStatus: target.privacyStatus,
+          }
+        : { mode: "existing", playlistId: target.playlistId, title: target.title },
+    status: "queued",
+    tracks: toTransferTracks(tracks),
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  publish({ ...state, jobs: [...state.jobs, job] });
+  void runQueue();
+  return job.id;
+}
+
 export function continueJob(id: string) {
   updateJob(id, (job) => ({
     ...job,
@@ -606,7 +643,11 @@ export function removeJob(id: string) {
   publish({ ...state, jobs: state.jobs.filter((current) => current.id !== id) });
 }
 
-/** Puts not-found and failed tracks back in line, bypassing the search cache. */
+/**
+ * Puts not-found and failed tracks back in line. A song that was never found is
+ * searched again from scratch; one that was found but could not be added keeps
+ * its cached match, so the retry only costs the add.
+ */
 export function retryUnmatched(id: string) {
   updateJob(id, (job) => ({
     ...job,
@@ -614,7 +655,12 @@ export function retryUnmatched(id: string) {
     tracks:
       job.tracks?.map((track) =>
         track.status === "not-found" || track.status === "failed"
-          ? { ...track, status: "pending", forceSearch: true, error: undefined }
+          ? {
+              ...track,
+              status: "pending" as const,
+              forceSearch: track.status === "not-found",
+              error: undefined,
+            }
           : track,
       ) ?? null,
   }));
@@ -947,6 +993,79 @@ function jobParts(jobId: string, index: number) {
   const track = job.tracks?.find((t) => t.index === index);
   if (!track) throw new Error("Track not found");
   return { job, playlistId, track, adapter: ADAPTERS[job.direction] };
+}
+
+/**
+ * Retries one track on its own, without resuming the whole copy: searches again
+ * when it was never matched, then adds the match to the target playlist. This
+ * is the manual way out of a one-off failure, e.g. a transient YouTube 409.
+ */
+export async function retryTrack(jobId: string, index: number) {
+  const { job, playlistId, track, adapter } = jobParts(jobId, index);
+
+  if (job.status === "running") {
+    throw new Error("This copy is running. Pause it before retrying one song.");
+  }
+  if (track.status === "added" || track.status === "duplicate") {
+    throw new Error("This track is already in the playlist");
+  }
+  if (track.status === "skipped") {
+    throw new Error("This track is not a song");
+  }
+
+  const signal = new AbortController().signal;
+  // A song that was never found is searched again from scratch; one that was
+  // found but could not be added reuses the cached match, which costs nothing.
+  const searchInput = {
+    ...track,
+    forceSearch: track.status === "not-found" || track.forceSearch,
+  };
+
+  let match: TargetMatch | null;
+  try {
+    match = await lookUp(adapter, searchInput, signal);
+  } catch (error) {
+    updateTrack(jobId, index, {
+      status: "failed",
+      error: error instanceof Error ? error.message : "The search failed",
+    });
+    throw error;
+  }
+
+  if (!match) {
+    updateTrack(jobId, index, {
+      status: "not-found",
+      forceSearch: undefined,
+      error: undefined,
+    });
+    throw new Error(
+      `${SERVICE_LABELS[adapter.target]} has no match for this song. Paste a link instead.`,
+    );
+  }
+
+  let added: AddResult;
+  try {
+    added =
+      (await adapter.addMany(playlistId, [match.targetId])).get(match.targetId) ?? {};
+  } catch (error) {
+    updateTrack(jobId, index, {
+      status: "failed",
+      error: error instanceof Error ? error.message : "Adding it failed",
+    });
+    throw error;
+  }
+
+  updateTrack(jobId, index, {
+    status: "added",
+    targetId: match.targetId,
+    targetTitle: added.title || match.title,
+    targetSubtitle: added.subtitle || match.subtitle,
+    itemId: added.itemId,
+    confidence: match.confidence,
+    forceSearch: undefined,
+    reviewed: match.confidence === "high" ? true : undefined,
+    error: undefined,
+  });
 }
 
 /** Removes an added track from the target playlist. */

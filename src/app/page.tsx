@@ -1,4 +1,10 @@
-import { ArrowLeftRight, ListMusic, Music, Users } from "lucide-react";
+import {
+  ArrowLeftRight,
+  GitCompareArrows,
+  ListMusic,
+  Music,
+  Users,
+} from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
 import { SectionLink } from "@/components/section-link";
@@ -116,12 +122,20 @@ export default async function HomePage() {
               <ArrowLeftRight className="size-4" />
               Copies
             </h2>
-            <SectionLink
-              href="/transfers"
-              icon={ArrowLeftRight}
-              label="Spotify ⇄ YouTube Music"
-              description="Copy playlists either way, then review the matches."
-            />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <SectionLink
+                href="/transfers"
+                icon={ArrowLeftRight}
+                label="Spotify ⇄ YouTube Music"
+                description="Copy playlists either way, then review the matches."
+              />
+              <SectionLink
+                href="/compare/playlists"
+                icon={GitCompareArrows}
+                label="Compare two playlists"
+                description="What they share, what each one is missing, and copy it over."
+              />
+            </div>
           </section>
         )}
 

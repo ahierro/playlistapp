@@ -35,11 +35,14 @@ export class YouTubeAuthError extends Error {
 
 export class YouTubeApiError extends Error {
   readonly status: number;
+  /** Google's own error reason, e.g. "quotaExceeded" or "SERVICE_UNAVAILABLE". */
+  readonly reason: string;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, reason = "") {
     super(message);
     this.name = "YouTubeApiError";
     this.status = status;
+    this.reason = reason;
   }
 }
 
@@ -95,6 +98,7 @@ export async function youtubeFetch<T>(
     throw new YouTubeApiError(
       `The YouTube Data API quota is exhausted (${reason}). It resets daily at midnight Pacific time.`,
       429,
+      reason,
     );
   }
 
@@ -104,6 +108,7 @@ export async function youtubeFetch<T>(
         ? `YouTube rejected the request (${reason}). Sign in again and make sure the YouTube permission is ticked on the Google consent screen.`
         : `YouTube rejected the request (${reason || 403}): ${detail}`,
       403,
+      reason,
     );
   }
 
@@ -121,7 +126,91 @@ export async function youtubeFetch<T>(
   throw new YouTubeApiError(
     `YouTube Data API error (${response.status}${reason ? `, ${reason}` : ""}): ${detail}`,
     response.status,
+    reason,
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* Transient failures                                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Statuses Google returns when the request itself was fine but the backend
+ * could not serve it right now. 429 is deliberately absent: the daily quota
+ * does not come back within a retry.
+ */
+const TRANSIENT_STATUSES = new Set([409, 500, 502, 503, 504]);
+
+/**
+ * `playlistItems.insert` answers 409 / SERVICE_UNAVAILABLE ("The operation was
+ * aborted") when two writes to the same playlist overlap or the backend is
+ * busy. It is not a problem with the video or the playlist and a retry a moment
+ * later almost always works.
+ */
+const TRANSIENT_REASONS = new Set([
+  "SERVICE_UNAVAILABLE",
+  "ABORTED",
+  "aborted",
+  "backendError",
+  "internalError",
+  "transientError",
+]);
+
+export function isTransientYouTubeError(error: unknown): boolean {
+  return (
+    error instanceof YouTubeApiError &&
+    error.status !== 429 &&
+    (TRANSIENT_STATUSES.has(error.status) || TRANSIENT_REASONS.has(error.reason))
+  );
+}
+
+/** Attempts (first try included) for a write that failed transiently. */
+const TRANSIENT_ATTEMPTS = 3;
+const TRANSIENT_BASE_DELAY_MS = 700;
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+/** Exponential back-off with full jitter, so parallel copies do not sync up. */
+function backoffMs(attempt: number) {
+  const ceiling = TRANSIENT_BASE_DELAY_MS * 2 ** attempt;
+  return Math.round(ceiling / 2 + Math.random() * (ceiling / 2));
+}
+
+/**
+ * Runs `task` again after a short wait while it fails transiently. `task` must
+ * be safe to repeat: `onRetry` runs before each new attempt and can return a
+ * result when the previous attempt turned out to have landed after all.
+ */
+async function withTransientRetry<T>(
+  task: () => Promise<T>,
+  { onRetry }: { onRetry?: () => Promise<T | null> } = {},
+): Promise<T> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < TRANSIENT_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      await sleep(backoffMs(attempt - 1));
+      const landed = await onRetry?.();
+      if (landed) return landed;
+    }
+
+    try {
+      return await task();
+    } catch (error) {
+      if (!isTransientYouTubeError(error)) throw error;
+      lastError = error;
+      console.warn(
+        `[youtube] Transient failure (attempt ${attempt + 1}/${TRANSIENT_ATTEMPTS})`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
+  const landed = await onRetry?.();
+  if (landed) return landed;
+  throw lastError;
 }
 
 type Thumbnail = { url: string; width?: number; height?: number };
@@ -777,38 +866,90 @@ export type AddedItem = {
   channelTitle: string;
 };
 
+type PlaylistItemResource = {
+  id: string;
+  snippet?: { title?: string; videoOwnerChannelTitle?: string };
+};
+
+function toAddedItem(raw: PlaylistItemResource, videoId: string): AddedItem {
+  return {
+    itemId: raw.id,
+    videoId,
+    title: raw.snippet?.title ?? "",
+    channelTitle: raw.snippet?.videoOwnerChannelTitle ?? "",
+  };
+}
+
+/**
+ * The playlist entry for one video, or null when it is not in the playlist.
+ * One quota unit, which is cheap enough to spend after a failed insert: a 409
+ * sometimes comes back for a write that did go through, and inserting again
+ * would leave the song twice in the playlist.
+ */
+async function findPlaylistItem(
+  accessToken: string,
+  playlistId: string,
+  videoId: string,
+): Promise<AddedItem | null> {
+  try {
+    const data = await youtubeFetch<PagedResponse<PlaylistItemResource>>(
+      "/playlistItems",
+      { part: "snippet", playlistId, videoId, maxResults: "1" },
+      accessToken,
+    );
+    const item = data.items?.[0];
+    return item ? toAddedItem(item, videoId) : null;
+  } catch (error) {
+    // A dead session or an exhausted quota has to reach the caller; anything
+    // else only means the check itself did not work, so treat it as "unknown".
+    if (error instanceof YouTubeAuthError) throw error;
+    if (error instanceof YouTubeApiError && error.status === 429) throw error;
+    return null;
+  }
+}
+
+/**
+ * Adds one video (50 quota units). Transient backend failures (409
+ * SERVICE_UNAVAILABLE and friends) are retried with a back-off, and before each
+ * retry the playlist is checked so a write that landed despite the error is not
+ * repeated.
+ */
 export async function addVideoToPlaylist(
   accessToken: string,
   playlistId: string,
   videoId: string,
 ): Promise<AddedItem> {
-  const data = await youtubeFetch<{
-    id: string;
-    snippet?: { title?: string; videoOwnerChannelTitle?: string };
-  }>("/playlistItems", { part: "snippet" }, accessToken, {
-    method: "POST",
-    body: {
-      snippet: {
-        playlistId,
-        resourceId: { kind: "youtube#video", videoId },
-      },
+  return withTransientRetry(
+    async () => {
+      const data = await youtubeFetch<PlaylistItemResource>(
+        "/playlistItems",
+        { part: "snippet" },
+        accessToken,
+        {
+          method: "POST",
+          body: {
+            snippet: {
+              playlistId,
+              resourceId: { kind: "youtube#video", videoId },
+            },
+          },
+        },
+      );
+      return toAddedItem(data, videoId);
     },
-  });
-
-  return {
-    itemId: data.id,
-    videoId,
-    title: data.snippet?.title ?? "",
-    channelTitle: data.snippet?.videoOwnerChannelTitle ?? "",
-  };
+    { onRetry: () => findPlaylistItem(accessToken, playlistId, videoId) },
+  );
 }
 
 export async function removePlaylistItem(
   accessToken: string,
   itemId: string,
 ): Promise<void> {
-  await youtubeFetch<void>("/playlistItems", { id: itemId }, accessToken, {
-    method: "DELETE",
+  await withTransientRetry(async () => {
+    await youtubeFetch<void>("/playlistItems", { id: itemId }, accessToken, {
+      method: "DELETE",
+    });
+    return true;
   });
 }
 
