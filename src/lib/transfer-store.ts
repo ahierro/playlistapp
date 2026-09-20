@@ -96,7 +96,6 @@ export type TransferTarget =
   | {
       mode: "new";
       title: string;
-      description: string;
       privacyStatus: PrivacyStatus;
       /** Set as soon as the playlist exists, so a resume never creates it twice. */
       playlistId?: string;
@@ -198,7 +197,6 @@ const toYouTube: Adapter = {
     (
       await createYouTubePlaylist({
         title: target.title,
-        description: target.description,
         privacyStatus: target.privacyStatus,
       })
     ).id,
@@ -271,7 +269,6 @@ const toSpotify: Adapter = {
     (
       await createSpotifyPlaylist({
         title: target.title,
-        description: target.description,
         privacyStatus: target.privacyStatus === "public" ? "public" : "private",
       })
     ).id,
@@ -543,7 +540,6 @@ export function enqueueTransfers(
   playlists: PlaylistSummary[],
   target: NewTarget,
 ) {
-  const sourceLabel = SERVICE_LABELS[ADAPTERS[direction].source];
   const now = Date.now();
   const jobs: TransferJob[] = playlists.map((playlist) => ({
     id: newId(),
@@ -556,7 +552,6 @@ export function enqueueTransfers(
             // A custom title only makes sense for a single playlist.
             title:
               (playlists.length === 1 && target.title?.trim()) || playlist.name,
-            description: `Copied from ${sourceLabel}: ${playlist.url}`,
             privacyStatus: target.privacyStatus,
           }
         : { mode: "existing", playlistId: target.playlistId, title: target.title },
@@ -581,7 +576,6 @@ export function enqueueTrackTransfer(
   tracks: ExportedTrack[],
   target: NewTarget,
 ): string {
-  const sourceLabel = SERVICE_LABELS[ADAPTERS[direction].source];
   const now = Date.now();
   const job: TransferJob = {
     id: newId(),
@@ -592,7 +586,6 @@ export function enqueueTrackTransfer(
         ? {
             mode: "new",
             title: target.title?.trim() || source.name,
-            description: `Copied from ${sourceLabel}: ${source.url}`,
             privacyStatus: target.privacyStatus,
           }
         : { mode: "existing", playlistId: target.playlistId, title: target.title },
