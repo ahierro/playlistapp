@@ -81,12 +81,28 @@ const relativeFormat = new Intl.RelativeTimeFormat(undefined, {
   numeric: "auto",
 });
 
-/** "in 6 hours", counted from now. */
-function timeUntil(at: number): string {
-  const minutes = Math.round((at - Date.now()) / 60_000);
+/** "in 6 hours". */
+function timeUntil(at: number, from: number): string {
+  const minutes = Math.round((at - from) / 60_000);
   if (minutes < 1) return relativeFormat.format(1, "minute");
   if (minutes < 60) return relativeFormat.format(minutes, "minute");
   return relativeFormat.format(Math.round(minutes / 60), "hour");
+}
+
+/**
+ * The current time, refreshed every minute while `active`. Held in state so
+ * rendering never reads the clock, which would make the result unstable.
+ */
+function useNow(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!active) return;
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, [active]);
+
+  return now;
 }
 
 export function TransfersView({
@@ -107,11 +123,20 @@ export function TransfersView({
   );
 
   const jobs = useMemo(() => [...state.jobs].reverse(), [state.jobs]);
-  const waitingQuota = state.jobs.some(
+
+  const quotaPaused = state.jobs.some(
     (job) =>
       job.status === "paused-quota" &&
       (job.pausedBy ?? "youtube-quota") === "youtube-quota",
   );
+  // A job stays "paused-quota" until it is resumed, so the status alone cannot
+  // say whether the quota is still out. The moment it ran out is saved, and the
+  // reset that follows THAT moment is when it comes back.
+  const quotaBackAt =
+    state.quotaHitAt === null ? null : nextQuotaReset(new Date(state.quotaHitAt));
+  const now = useNow(quotaPaused);
+  const waitingQuota =
+    quotaPaused && quotaBackAt !== null && now < quotaBackAt;
   const resumable = state.jobs.some(
     (job) => job.status === "paused" || job.status === "paused-quota",
   );
@@ -137,7 +162,7 @@ export function TransfersView({
 
   return (
     <div className="flex flex-col gap-4">
-      {waitingQuota && <QuotaBanner />}
+      {waitingQuota && <QuotaBanner backAt={quotaBackAt!} now={now} />}
 
       {!waitingQuota && resumable && !state.running && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/30 p-4 text-sm">
@@ -165,25 +190,14 @@ export function TransfersView({
   );
 }
 
-/**
- * Own component so the clock it keeps only re-renders the banner, and only
- * while a copy is actually waiting for the quota.
- */
-function QuotaBanner() {
-  const [reset, setReset] = useState(nextQuotaReset);
-
-  useEffect(() => {
-    const timer = setInterval(() => setReset(nextQuotaReset()), 60_000);
-    return () => clearInterval(timer);
-  }, []);
-
+function QuotaBanner({ backAt, now }: { backAt: number; now: number }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm">
       <p>
         YouTube&apos;s daily quota is used up. It comes back{" "}
-        <strong>{timeUntil(reset)}</strong>, at{" "}
+        <strong>{timeUntil(backAt, now)}</strong>, at{" "}
         <strong>
-          {timeFormat.format(reset)} {utcOffset(reset)}
+          {timeFormat.format(backAt)} {utcOffset(backAt)}
         </strong>
         . Come back then and press Continue.
       </p>

@@ -219,6 +219,9 @@ export function ComparePlaylists({
 
       {loaded && (
         <Results
+          // Remounts on a new pair, so the ticked songs of the previous
+          // comparison do not carry over onto whatever lands in their place.
+          key={`${loaded.spotify.playlist.id}:${loaded["youtube-music"].playlist.id}`}
           loaded={loaded}
           spotifyUserId={spotifyUserId}
           youtubeUserId={youtubeUserId}

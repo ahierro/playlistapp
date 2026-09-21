@@ -77,4 +77,16 @@
   body {
     @apply bg-background font-sans text-foreground;
   }
+  /*
+   * Tailwind v4's preflight resets buttons to `cursor: default`, so nothing in
+   * the app told the pointer that a button was clickable. Anything that takes
+   * a click gets the hand back; disabled controls keep the plain arrow.
+   */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  label:has(> input[type="checkbox"]:not(:disabled)),
+  input[type="checkbox"]:not(:disabled),
+  summary {
+    @apply cursor-pointer;
+  }
 }

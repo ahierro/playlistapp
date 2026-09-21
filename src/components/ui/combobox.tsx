@@ -207,7 +207,7 @@ export function Combobox({
                     onMouseEnter={() => setActive(index)}
                     onClick={() => choose(option)}
                     className={cn(
-                      "relative flex cursor-default items-center gap-2 rounded-sm py-1.5 pr-2 pl-8 text-sm select-none",
+                      "relative flex cursor-pointer items-center gap-2 rounded-sm py-1.5 pr-2 pl-8 text-sm select-none",
                       isActive && "bg-accent text-accent-foreground",
                     )}
                   >
