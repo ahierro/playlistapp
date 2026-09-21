@@ -310,12 +310,19 @@ export type PlaylistTracksPage = {
   total: number;
 };
 
+type RawArtist = {
+  id?: string | null;
+  uri?: string | null;
+  name?: string | null;
+  external_urls?: { spotify?: string | null } | null;
+};
+
 type RawMedia = {
   type?: string;
   name?: string | null;
   duration_ms?: number | null;
   album?: { name?: string | null } | null;
-  artists?: { name?: string | null }[] | null;
+  artists?: RawArtist[] | null;
   show?: { name?: string | null; publisher?: string | null } | null;
 } | null;
 
@@ -639,6 +646,26 @@ export async function searchArtists(
   }));
 }
 
+/** One artist by id, for the confirmation shown after a follow. */
+export async function getSpotifyArtist(
+  accessToken: string,
+  id: string,
+): Promise<SpotifyArtistHit> {
+  const response = await spotifyFetch(
+    `/artists/${encodeURIComponent(id)}`,
+    accessToken,
+  );
+  const artist = (await response.json()) as SpotifyArtist & { uri: string };
+
+  return {
+    uri: artist.uri,
+    id: artist.id,
+    name: artist.name,
+    url: artist.external_urls.spotify,
+    imageUrl: pickArtistImage(artist, 160)?.url ?? null,
+  };
+}
+
 /**
  * Follows artists. February 2026 replaced `PUT /me/following` with the unified
  * library endpoint, which takes URIs instead of ids.
@@ -675,4 +702,132 @@ export async function followSpotifyArtists(
 
   const params = new URLSearchParams({ uris: wanted.join(",") });
   await spotifyFetch(`/me/library?${params}`, accessToken, { method: "PUT" });
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Artists behind the songs (the "played but not followed" list)       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One credited artist of one song, with the id Spotify knows them by.
+ *
+ * Matching on ids rather than names is what makes this list exact: the same
+ * artist can be spelled differently across tracks, and two different artists
+ * can share a name.
+ */
+export type TrackArtistRef = {
+  id: string;
+  name: string;
+  uri: string;
+  url: string;
+};
+
+/**
+ * A page of credits. `artists` keeps the duplicates on purpose: an artist
+ * appearing in ten songs has to be counted ten times.
+ */
+export type ArtistRefsPage = {
+  artists: TrackArtistRef[];
+  /** Offset of the next page. null when there are no more. */
+  nextOffset: number | null;
+  total: number;
+};
+
+/**
+ * Every artist credited on one song, each one once. Podcast episodes have none.
+ *
+ * The de-duplication matters: a song crediting the same artist twice would
+ * otherwise count double in the tally.
+ */
+function toArtistRefs(media: RawMedia): TrackArtistRef[] {
+  if (!media || media.type === "episode") return [];
+
+  const refs: TrackArtistRef[] = [];
+  const seen = new Set<string>();
+
+  for (const artist of media.artists ?? []) {
+    // An artist without an id cannot be followed or told apart, so skip it.
+    if (!artist?.id || !artist.name || seen.has(artist.id)) continue;
+    seen.add(artist.id);
+    refs.push({
+      id: artist.id,
+      name: artist.name,
+      uri: artist.uri ?? `spotify:artist:${artist.id}`,
+      url:
+        artist.external_urls?.spotify ??
+        `https://open.spotify.com/artist/${artist.id}`,
+    });
+  }
+  return refs;
+}
+
+function toArtistRefsPage(data: {
+  items: RawPlaylistItem[];
+  next: string | null;
+  offset: number;
+  total: number;
+}): ArtistRefsPage {
+  const artists: TrackArtistRef[] = [];
+  for (const entry of data.items) {
+    artists.push(...toArtistRefs(entry.item ?? entry.track ?? null));
+  }
+
+  return {
+    artists,
+    // Based on the raw page length, so songs without credits never stall it.
+    nextOffset: data.next ? data.offset + data.items.length : null,
+    total: data.total,
+  };
+}
+
+/** The artists credited on one page of a playlist. */
+export async function getPlaylistArtistRefs(
+  accessToken: string,
+  playlistId: string,
+  { offset = 0 }: { offset?: number } = {},
+): Promise<ArtistRefsPage> {
+  const params = new URLSearchParams({
+    limit: "50",
+    offset: String(Math.max(offset, 0)),
+    additional_types: "track,episode",
+  });
+
+  const response = await spotifyFetch(
+    `/playlists/${encodeURIComponent(playlistId)}/items?${params}`,
+    accessToken,
+  );
+  return toArtistRefsPage(
+    (await response.json()) as {
+      items: RawPlaylistItem[];
+      next: string | null;
+      offset: number;
+      total: number;
+    },
+  );
+}
+
+/**
+ * The artists credited on one page of the liked songs. Needs the
+ * `user-library-read` scope, which sessions created before it was added do not
+ * have; Spotify answers 403 and the caller reports it as a missing permission.
+ */
+export async function getSavedTrackArtistRefs(
+  accessToken: string,
+  { offset = 0 }: { offset?: number } = {},
+): Promise<ArtistRefsPage> {
+  const params = new URLSearchParams({
+    limit: "50",
+    offset: String(Math.max(offset, 0)),
+  });
+
+  const response = await spotifyFetch(`/me/tracks?${params}`, accessToken);
+  return toArtistRefsPage(
+    (await response.json()) as {
+      items: RawPlaylistItem[];
+      next: string | null;
+      offset: number;
+      total: number;
+    },
+  );
 }

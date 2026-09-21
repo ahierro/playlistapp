@@ -150,6 +150,31 @@ with a **Follow** button per artist.
   do not have them, so **sign out of Spotify and sign in again**.
 - **Follow on YouTube Music** searches the channel (100 quota units) and subscribes (50), so about
   **150 units per artist**, roughly 65 a day. The "Name - Topic" channel is preferred.
+
+### Artists you play but do not follow (Spotify only)
+
+`/artists/unfollowed` lists the artists credited on your own songs that you are not following, the
+ones you have most songs of first, with a Follow button on each row.
+
+- The scan reads every song of every playlist you own or collaborate on
+  (`GET /playlists/{id}/items`) plus your liked songs (`GET /me/tracks`), and compares them against
+  the artists you follow. It is a long run of requests, so it is started by hand and the result is
+  kept in `localStorage` until you scan again.
+- If the complete artist list is already in `localStorage` (the ↓ button on the artists page left it
+  there), the scan compares against that instead of walking `GET /me/following` again, and says how
+  old that copy is. When it does have to fetch the list, it saves it, so the artists page and the
+  next scan open with it.
+- The progress bar counts **songs**, not lists: the playlist lengths come with the playlist list, so
+  there is a total before anything is read, and each page corrects it with the real length.
+- Artists are matched **by Spotify id**, never by name, so the list is exact and following goes
+  straight to the right artist URI, with no search in between. This is why the feature is Spotify
+  only: YouTube gives a video's artist no id of its own.
+- Every credit counts, features included, and the count is what the list is sorted by. The same
+  artist credited twice on one song still counts once.
+- Reading the liked songs needs the `user-library-read` scope. Sessions created before it was added
+  do not have it: the playlists are still scanned and the page says to **sign out of Spotify and
+  sign in again**. A playlist Spotify refuses (403) is skipped rather than failing the scan, and a
+  429 is waited out for the seconds Spotify asks for.
 - If neither service has an artist under that exact name, the row shows an error instead of
   following the wrong one.
 - The lists in `localStorage` are not updated by following: download them again to refresh the
@@ -270,7 +295,8 @@ has its own sign-out button in the header.
 
 - **Authorization Code** flow handled by Auth.js. Spotify scopes: `user-follow-read`,
   `playlist-read-private`, `playlist-read-collaborative`, `playlist-modify-public`,
-  `playlist-modify-private`, `user-follow-modify` and `user-library-modify`.
+  `playlist-modify-private`, `user-follow-modify`, `user-library-read` and
+  `user-library-modify`.
 - The session is a **JWT in an httpOnly cookie**. The Spotify `access_token` lives there and is **never sent to the browser**: the client component asks `/api/spotify/following` for the data and the server adds the `Authorization` header.
 - The Spotify access token lasts 1 hour. The `jwt` callback renews it on its own with the `refresh_token` (with a 60s margin). If the refresh fails, the session is marked with `error: "RefreshTokenError"` and the app sends you back to the login.
 

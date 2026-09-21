@@ -28,6 +28,8 @@ export const SPOTIFY_SCOPES = [
   "playlist-modify-public",
   "playlist-modify-private",
   "user-follow-modify",
+  // Reading the liked songs, for the artists you play but do not follow.
+  "user-library-read",
   "user-library-modify",
 ] as const;
 

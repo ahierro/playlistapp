@@ -55,6 +55,62 @@ export class ApiError extends Error {
 /** Safety cap for every pagination walk: 50 items * 200 pages = 10,000. */
 export const MAX_PAGES = 200;
 
+/** Waits longer than this and we give up rather than hang the page. */
+const MAX_RATE_LIMIT_WAIT_S = 60;
+const MAX_RATE_LIMIT_RETRIES = 5;
+
+function sleep(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        reject(new DOMException("Aborted", "AbortError"));
+      },
+      { once: true },
+    );
+  });
+}
+
+/**
+ * Runs `task`, waiting out the short pauses Spotify asks for with a 429. Long
+ * waits and every other failure are rethrown.
+ *
+ * Anything that fires a long run of requests (walking every playlist, say) will
+ * meet the rate limit sooner or later, and a whole scan should not die because
+ * of a three-second pause.
+ */
+export async function withRateLimit<T>(
+  task: () => Promise<T>,
+  {
+    signal,
+    onWait,
+  }: { signal?: AbortSignal; onWait?: (seconds: number) => void } = {},
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await task();
+    } catch (error) {
+      const wait =
+        error instanceof QuotaExceededError
+          ? (error.retryAfterSeconds ?? 5)
+          : null;
+
+      if (
+        wait === null ||
+        wait > MAX_RATE_LIMIT_WAIT_S ||
+        attempt >= MAX_RATE_LIMIT_RETRIES
+      ) {
+        throw error;
+      }
+
+      onWait?.(wait);
+      await sleep(wait * 1000, signal);
+    }
+  }
+}
+
 export async function getJson<T>(
   url: string,
   { signal, service }: { signal?: AbortSignal; service: string },

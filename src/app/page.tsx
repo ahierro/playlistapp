@@ -3,6 +3,7 @@ import {
   GitCompareArrows,
   ListMusic,
   Music,
+  UserPlus,
   Users,
 } from "lucide-react";
 
@@ -111,6 +112,15 @@ export default async function HomePage() {
                   label="Playlists"
                   description={DESCRIPTIONS[service].playlists}
                 />
+                {/* Only Spotify gives a track's artists an id of their own. */}
+                {service === "spotify" && (
+                  <SectionLink
+                    href="/artists/unfollowed"
+                    icon={UserPlus}
+                    label="Artists you don't follow"
+                    description="Who is in your playlists and liked songs, ready to follow."
+                  />
+                )}
               </div>
             </section>
           );

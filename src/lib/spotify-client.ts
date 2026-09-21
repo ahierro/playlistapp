@@ -13,11 +13,13 @@ import {
 } from "@/lib/music";
 import {
   playlistTrackCount,
+  type ArtistRefsPage,
   type FollowedArtistsPage,
   type PlaylistsPage,
   type PlaylistTracksPage,
   type SpotifyArtist,
   type SpotifyPlaylist,
+  type TrackArtistRef,
 } from "@/lib/spotify";
 
 export { MissingScopeError, SessionExpiredError } from "@/lib/api-client";
@@ -141,6 +143,70 @@ export function fetchAllPlaylistTracks(
 }
 
 /* ------------------------------------------------------------------ */
+/* Artists behind the songs                                            */
+/* ------------------------------------------------------------------ */
+
+export type { TrackArtistRef };
+
+/** How far through one list a walk is, in songs. */
+export type RefsProgress = { done: number; total: number };
+
+type RefsOptions = {
+  signal?: AbortSignal;
+  /** Called after every page, so a long list can show real progress. */
+  onProgress?: (progress: RefsProgress) => void;
+};
+
+/**
+ * Walks the offset pagination of an artist-refs route, reporting how many songs
+ * it has read out of the total the route hands back on every page.
+ */
+async function walkArtistRefs(
+  pageUrl: (offset: number) => string,
+  { signal, onProgress }: RefsOptions,
+): Promise<TrackArtistRef[]> {
+  const artists: TrackArtistRef[] = [];
+  let offset: number | null = 0;
+
+  for (let page = 0; page < MAX_PAGES && offset !== null; page++) {
+    const data: ArtistRefsPage = await getJson<ArtistRefsPage>(
+      pageUrl(offset),
+      { signal, service: SERVICE },
+    );
+
+    artists.push(...data.artists);
+    const next: number | null = data.nextOffset;
+    // On the last page there is no next offset, so everything has been read.
+    onProgress?.({ done: next ?? data.total, total: data.total });
+
+    // Guard against an offset that does not advance.
+    if (next !== null && next <= offset) break;
+    offset = next;
+  }
+
+  return artists;
+}
+
+/** Every artist credited on a playlist's songs, duplicates included. */
+export function fetchPlaylistArtistRefs(
+  playlistId: string,
+  options: RefsOptions = {},
+): Promise<TrackArtistRef[]> {
+  const base = `/api/spotify/playlists/${encodeURIComponent(playlistId)}/artists`;
+  return walkArtistRefs((offset) => `${base}?offset=${offset}`, options);
+}
+
+/** Every artist credited on the liked songs, duplicates included. */
+export function fetchSavedTrackArtistRefs(
+  options: RefsOptions = {},
+): Promise<TrackArtistRef[]> {
+  return walkArtistRefs(
+    (offset) => `/api/spotify/saved-tracks/artists?offset=${offset}`,
+    options,
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Writing (YouTube Music -> Spotify copy)                             */
 /* ------------------------------------------------------------------ */
 
@@ -232,6 +298,22 @@ export function spotifyTrackUrl(uri: string) {
 }
 
 export type FollowResult = { name: string; url: string; imageUrl: string | null };
+
+/**
+ * Follows the artist with this exact URI. Used where the id came from the
+ * user's own songs, so there is nothing to search for.
+ */
+export async function followSpotifyArtistUri(
+  uri: string,
+): Promise<FollowResult> {
+  const result = await sendJson<FollowResult>("/api/spotify/follow", {
+    method: "POST",
+    body: { uri },
+    service: SERVICE,
+  });
+  if (!result) throw new Error("Spotify did not confirm the follow");
+  return result;
+}
 
 /** Follows an artist on Spotify by name (searches first). */
 export async function followArtistOnSpotify(

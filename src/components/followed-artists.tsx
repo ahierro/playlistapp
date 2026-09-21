@@ -10,7 +10,14 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeftRight, Download, Loader2, RefreshCw, Search } from "lucide-react";
+import {
+  ArrowLeftRight,
+  Download,
+  Loader2,
+  RefreshCw,
+  Search,
+  UserPlus,
+} from "lucide-react";
 
 import { ArtistCard } from "@/components/artist-card";
 import { CardGridSkeleton } from "@/components/card-grid-skeleton";
@@ -246,6 +253,16 @@ export function FollowedArtists({
               Download the complete list as .txt
             </span>
           </Button>
+
+          {/* Only Spotify gives a track's artists an id of their own. */}
+          {service === "spotify" && (
+            <Button asChild variant="outline" size="icon" title="Artists in your playlists and liked songs that you do not follow">
+              <Link href="/artists/unfollowed">
+                <UserPlus />
+                <span className="sr-only">Artists you play but do not follow</span>
+              </Link>
+            </Button>
+          )}
         </div>
       </div>
 
