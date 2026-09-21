@@ -11,8 +11,8 @@ import {
 
 /**
  * Finds the YouTube video for one track. Body: { name, artists, durationMs? }.
- * POST because it spends 101 quota units: it must not be triggered by a
- * prefetch or a cross-site link.
+ * POST because it spends one of the day's 100 searches: it must not be
+ * triggered by a prefetch or a cross-site link.
  */
 export async function POST(request: Request) {
   if (!isSameOriginRequest(request)) return forbiddenOrigin();

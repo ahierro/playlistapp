@@ -20,8 +20,10 @@ import { cleanChannelName, parseYouTubeTrack } from "@/lib/youtube-track-parser"
  * Server-side client for the YouTube Data API v3, which is how we read a
  * YouTube Music library (YouTube Music has no public API of its own).
  *
- * Quota: every `list` call below costs 1 unit out of the default 10,000 a day
- * per Google Cloud project, so even large libraries stay far below the limit.
+ * Quota: since June 2026 `search.list` is charged to a bucket of its own (100
+ * calls a day); every `list` call below costs 1 unit out of the 10,000 a day
+ * the general bucket allows, so even large libraries stay far below it. See
+ * `@/lib/youtube-quota`.
  */
 const API_BASE = "https://www.googleapis.com/youtube/v3";
 
@@ -821,9 +823,10 @@ export async function getAllYouTubeArtists(
 /* ------------------------------------------------------------------ */
 
 /**
- * Quota cost of each call below, in units of the default 10,000/day:
- * search.list 100, videos.list 1, playlists.insert 50,
- * playlistItems.insert 50, playlistItems.delete 50, playlistItems.list 1.
+ * Quota cost of each call below. `search.list` takes one of the 100 calls a day
+ * its own bucket allows; the rest come out of the 10,000 general units a day:
+ * videos.list 1, playlists.insert 50, playlistItems.insert 50,
+ * playlistItems.delete 50, playlistItems.list 1.
  */
 
 export type PrivacyStatus = "private" | "unlisted" | "public";
@@ -992,8 +995,9 @@ export type TrackMatch = {
 };
 
 /**
- * Searches YouTube for a track and picks the best video. Costs 101 units: the
- * search plus one `videos.list` for the durations of the candidates.
+ * Searches YouTube for a track and picks the best video. Costs one `search.list`
+ * call out of the 100 a day, plus one general unit for the `videos.list` that
+ * reads the candidates' durations.
  */
 export async function findTrackOnYouTube(
   accessToken: string,
@@ -1079,7 +1083,7 @@ export type YouTubeChannelHit = {
   imageUrl: string | null;
 };
 
-/** Channels matching a name (100 quota units). */
+/** Channels matching a name (one of the day's 100 `search.list` calls). */
 export async function searchChannels(
   accessToken: string,
   query: string,

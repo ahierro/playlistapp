@@ -25,11 +25,12 @@ import {
   compareTrackLists,
   type TrackComparison,
 } from "@/lib/track-compare";
+import { enqueueTrackTransfer, initTransfers } from "@/lib/transfer-store";
 import {
-  enqueueTrackTransfer,
-  estimateUnits,
-  initTransfers,
-} from "@/lib/transfer-store";
+  DAILY_SEARCH_CALLS,
+  estimateQuota,
+  forecastQuota,
+} from "@/lib/youtube-quota";
 import { useCachedList } from "@/lib/use-cached-list";
 import { cn } from "@/lib/utils";
 
@@ -206,8 +207,9 @@ export function ComparePlaylists({
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Reading a YouTube Music playlist costs about 2 quota units per 50 songs,
-        so comparing is cheap. Each playlist is read once per visit.
+        Reading a YouTube Music playlist costs about 2 quota units per 50 songs
+        and no searches, so comparing is cheap. Each playlist is read once per
+        visit.
       </p>
 
       {(listError || error) && (
@@ -472,11 +474,12 @@ function MissingSection({
       ? target.id !== YOUTUBE_LIKES_ID
       : target.ownerId === spotifyUserId || target.collaborative;
 
-  const units = estimateUnits(
+  const quota = estimateQuota(
     from === "spotify" ? "spotify-to-youtube" : "youtube-to-spotify",
     chosen.length,
     0,
   );
+  const quotaDays = forecastQuota(quota).days;
 
   function copy() {
     if (chosen.length === 0 || !writable) return;
@@ -568,12 +571,18 @@ function MissingSection({
       {chosen.length > 0 && to === "youtube-music" && (
         <p className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
           Copying {chosen.length} song{chosen.length === 1 ? "" : "s"} to
-          YouTube Music needs up to{" "}
+          YouTube Music needs{" "}
           <strong className="text-foreground">
-            {units.toLocaleString("en-US")}
+            {quota.search.toLocaleString("en-US")}
           </strong>{" "}
-          quota units (about 150 each). Above the daily 10,000 the copy pauses
-          and you continue it the next day from the Copies page.
+          of the {DAILY_SEARCH_CALLS} searches YouTube allows a day, plus{" "}
+          <strong className="text-foreground">
+            {quota.general.toLocaleString("en-US")}
+          </strong>{" "}
+          units.
+          {quotaDays > 1
+            ? ` That is about ${quotaDays} days: the copy pauses when the day's quota runs out and you continue it the next day from the Copies page.`
+            : " It should fit in today's quota, unless you already used part of it."}
         </p>
       )}
 

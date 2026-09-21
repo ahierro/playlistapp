@@ -163,8 +163,9 @@ export function CompareArtists({
 
       {other === "youtube-music" && (
         <p className="rounded-xl border bg-muted/30 p-3 text-xs text-muted-foreground">
-          Following on YouTube costs about 150 quota units per artist (a search
-          plus the subscription), so roughly 65 a day.
+          Following on YouTube spends one of the 100 searches a day YouTube
+          allows, plus 50 units for the subscription, so roughly 100 artists a
+          day.
         </p>
       )}
 

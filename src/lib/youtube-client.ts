@@ -197,7 +197,7 @@ export async function createYouTubePlaylist(input: {
   return created;
 }
 
-/** 101 quota units. */
+/** One of the day's 100 searches, plus 1 general unit for the durations. */
 export async function matchTrackOnYouTube(
   track: { name: string; artists: string[]; durationMs?: number },
   signal?: AbortSignal,
@@ -261,7 +261,7 @@ export function youtubeMusicWatchUrl(videoId: string) {
   return `${MUSIC_BASE}/watch?v=${encodeURIComponent(videoId)}`;
 }
 
-/** Subscribes to an artist's channel on YouTube by name (150 quota units). */
+/** Subscribes to an artist's channel by name (one search + 50 general units). */
 export async function subscribeToArtistOnYouTube(
   name: string,
 ): Promise<{ name: string; url: string; imageUrl: string | null }> {

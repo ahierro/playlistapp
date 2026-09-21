@@ -24,15 +24,19 @@ import { SERVICES } from "@/lib/services";
 import {
   ADAPTERS,
   enqueueTransfers,
-  estimateUnits,
   initTransfers,
   type Direction,
 } from "@/lib/transfer-store";
+import {
+  DAILY_GENERAL_UNITS,
+  DAILY_SEARCH_CALLS,
+  estimateQuota,
+  forecastQuota,
+} from "@/lib/youtube-quota";
 import { useCachedList } from "@/lib/use-cached-list";
 import { cn } from "@/lib/utils";
 import type { PrivacyStatus } from "@/lib/youtube-client";
 
-const DAILY_UNITS = 10_000;
 /** YouTube's "Liked videos" cannot be written to through the API. */
 const YOUTUBE_LIKES_ID = "LL";
 
@@ -114,12 +118,12 @@ function CopyForm({
     (sum, playlist) => sum + (playlist.trackCount ?? 0),
     0,
   );
-  const units = estimateUnits(
+  const quota = estimateQuota(
     direction,
     trackCount,
     mode === "new" ? playlists.length : 0,
   );
-  const days = Math.max(1, Math.ceil(units / DAILY_UNITS));
+  const { days, limitedBy } = forecastQuota(quota);
 
   const chosen = targets.find((playlist) => playlist.id === targetId);
   const canSubmit =
@@ -258,24 +262,31 @@ function CopyForm({
       <p className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
         {direction === "spotify-to-youtube" ? (
           <>
-            YouTube allows about {DAILY_UNITS.toLocaleString("en-US")} quota
-            units a day and this copy needs up to{" "}
+            YouTube allows {DAILY_SEARCH_CALLS} searches a day and{" "}
+            {DAILY_GENERAL_UNITS.toLocaleString("en-US")} units for everything
+            else. This copy needs up to{" "}
             <strong className="text-foreground">
-              {units.toLocaleString("en-US")}
+              {quota.search.toLocaleString("en-US")} searches
             </strong>{" "}
-            (about 150 per song).{" "}
+            and{" "}
+            <strong className="text-foreground">
+              {quota.general.toLocaleString("en-US")} units
+            </strong>{" "}
+            (one search and 51 units per song).{" "}
             {days > 1
-              ? `Expect it to take about ${days} days: it pauses when the quota runs out and you continue it the next day from the Copies page.`
+              ? `Expect it to take about ${days} days — the ${
+                  limitedBy === "search" ? "searches" : "units"
+                } run out first — and it pauses when they do, so you continue it the next day from the Copies page.`
               : "It should fit in today's quota, unless you already used part of it."}
           </>
         ) : (
           <>
             Spotify has no daily limit: the whole copy runs now. Reading the
             YouTube playlists uses about{" "}
-            <strong className="text-foreground">{units}</strong> YouTube quota
-            units. If Spotify asks to slow down, the copy waits a few seconds
-            and carries on. If Spotify rejects the copy for a missing
-            permission, sign out of Spotify and sign in again.
+            <strong className="text-foreground">{quota.general}</strong> YouTube
+            units and no searches at all. If Spotify asks to slow down, the copy
+            waits a few seconds and carries on. If Spotify rejects the copy for
+            a missing permission, sign out of Spotify and sign in again.
           </>
         )}{" "}
         Keep the tab open while it runs.

@@ -2,9 +2,10 @@
  * Queue of playlist copies between Spotify and YouTube Music, in either
  * direction.
  *
- * - Spotify -> YouTube Music: YouTube's daily quota (10,000 units) covers only
- *   ~65 searched and inserted songs, so a copy spans days. When the quota runs
- *   out the job is marked "paused-quota" and "Continue" resumes it the next day.
+ * - Spotify -> YouTube Music: YouTube allows 100 searches a day (see
+ *   `@/lib/youtube-quota`), so a copy of more songs than that spans days. When
+ *   a bucket runs out the job is marked "paused-quota" and "Continue" resumes
+ *   it the next day.
  * - YouTube Music -> Spotify: reading YouTube costs ~2 units per 50 songs and
  *   Spotify has no daily quota, only a short rate limit. The runner waits the
  *   seconds Spotify asks for and carries on; tracks are added in batches.
@@ -1166,22 +1167,6 @@ export function summarizeJob(job: TransferJob) {
 
   const total = job.tracks?.length ?? 0;
   return { counts, total, processed: total - counts.pending, needsReview };
-}
-
-/**
- * YouTube quota units a copy needs at worst. Spotify -> YouTube: search,
- * durations and insert per song. YouTube -> Spotify: only reading the source
- * (items and durations, 2 units per 50 songs).
- */
-export function estimateUnits(
-  direction: Direction,
-  trackCount: number,
-  newPlaylists: number,
-) {
-  if (direction === "youtube-to-spotify") {
-    return Math.ceil(trackCount / 50) * 2 + 1;
-  }
-  return trackCount * 151 + newPlaylists * 50;
 }
 
 /**

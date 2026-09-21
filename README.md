@@ -236,9 +236,14 @@ remains. A cached match does not need another search. The copy queue is implemen
 
 Limits: podcast episodes are skipped, "Liked videos" cannot be a destination, and only
 Spotify playlists you own or collaborate on can be read. More than 100 new YouTube searches per
-day requires a quota extension and a YouTube API compliance audit. The UI and quota estimator in
-the current code still use the pre-June-2026 151-unit calculation; treat their displayed estimate
-as a known bug until the implementation is updated.
+day requires a quota extension and a YouTube API compliance audit.
+
+The estimate shown before a copy starts comes from `src/lib/youtube-quota.ts`, which models both
+buckets separately: `estimateQuota()` returns the `search.list` calls and the general units a copy
+needs, and `forecastQuota()` reports how many days it will span and **which bucket runs out
+first**. For a copy to YouTube that is almost always the searches — 100 songs of searching spends
+only ~5,100 of the 10,000 general units — so the dialog says "N searches and M units" rather than
+one number. Copies in the other direction only read YouTube, so they spend no searches at all.
 
 ### Copy YouTube Music playlists to Spotify
 
@@ -426,14 +431,12 @@ npm run dev     # dev server
 npm run build   # production build
 npm run start   # serve the build
 npm run lint    # eslint
-npm test        # parsers, matching, comparison and unfollowed-artist unit tests
+npm test        # parsers, matching, comparison, counting and quota unit tests
 ```
 
 ## Known implementation work
 
 - Complete the YouTube policy work listed in the compliance section before requesting a quota
   extension or publishing the Google OAuth application.
-- Replace the legacy YouTube quota estimator in the UI and `transfer-store.ts` with the granular
-  search/general-bucket model introduced in June 2026.
 - Add automated route-handler and browser-level tests. The existing suite covers pure parsing,
   normalization, comparison and counting logic only.
